@@ -3,7 +3,7 @@
  * File contents live in browser memory only. Real file storage arrives
  * with Prisma, and live collaboration with Yjs.
  */
-import { people, type Person } from "./people";
+import { currentUser, people, type PeerColor, type Person } from "./people";
 
 export interface WorkspacePeer extends Person {
   activity: string;
@@ -12,7 +12,15 @@ export interface WorkspacePeer extends Person {
   inCall: boolean;
   micOn: boolean;
   cameraOn: boolean;
-  status: "online" | "away";
+  status: "online" | "away" | "offline";
+}
+
+/** The signed-in user (or the sample user in the demo). */
+export interface WorkspaceMe {
+  name: string;
+  handle: string;
+  color: PeerColor;
+  role: "Owner" | "Editor" | "Viewer";
 }
 
 export interface WorkspaceMeta {
@@ -358,3 +366,11 @@ export const problems: Problem[] = [
     code: "logic",
   },
 ];
+
+/** The sample user shown in the public demo workspace. */
+export const demoMe: WorkspaceMe = {
+  name: currentUser.name,
+  handle: currentUser.handle,
+  color: currentUser.color,
+  role: "Owner",
+};

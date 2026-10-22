@@ -7,8 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Modal, inputClasses } from "@/components/ui/modal";
 import { Badge } from "@/components/ui/primitives";
 import { cn } from "@/lib/cn";
-import { currentUser } from "@/lib/mock/people";
-import type { WorkspacePeer } from "@/lib/mock/workspace";
+import type { WorkspaceMe, WorkspacePeer } from "@/lib/mock/workspace";
 
 export interface PendingInvite {
   email: string;
@@ -20,6 +19,8 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 export function InviteDialog({
   open,
   onClose,
+  name,
+  me,
   linkPath,
   onCopyLink,
   peers,
@@ -29,6 +30,8 @@ export function InviteDialog({
 }: {
   open: boolean;
   onClose: () => void;
+  name: string;
+  me: WorkspaceMe;
   linkPath: string;
   onCopyLink: () => Promise<boolean>;
   peers: WorkspacePeer[];
@@ -40,10 +43,11 @@ export function InviteDialog({
     <Modal
       open={open}
       onClose={onClose}
-      title="Invite to orbit-dashboard"
-      description="Invites are recorded in this tab only — emails are not sent in Phase 1."
+      title={`Invite to ${name}`}
+      description="Invites are recorded in this tab only — no emails are sent and no access is granted yet."
     >
       <InviteBody
+        me={me}
         linkPath={linkPath}
         onCopyLink={onCopyLink}
         peers={peers}
@@ -56,6 +60,7 @@ export function InviteDialog({
 }
 
 function InviteBody({
+  me,
   linkPath,
   onCopyLink,
   peers,
@@ -63,6 +68,7 @@ function InviteBody({
   onAddInvite,
   onRemoveInvite,
 }: {
+  me: WorkspaceMe;
   linkPath: string;
   onCopyLink: () => Promise<boolean>;
   peers: WorkspacePeer[];
@@ -156,9 +162,9 @@ function InviteBody({
         <p className="mb-2 text-[12.5px] font-medium text-fg-muted">People with access</p>
         <ul className="divide-y divide-line rounded-[10px] border border-line">
           <li className="flex items-center gap-3 px-3 py-2.5">
-            <Avatar name={currentUser.name} color={currentUser.color} size="sm" />
-            <span className="flex-1 text-[13px] text-fg">{currentUser.name} (you)</span>
-            <span className="text-[12px] text-fg-subtle">Owner</span>
+            <Avatar name={me.name} color={me.color} size="sm" />
+            <span className="flex-1 text-[13px] text-fg">{me.name} (you)</span>
+            <span className="text-[12px] text-fg-subtle">{me.role}</span>
           </li>
           {peers.map((p) => (
             <li key={p.id} className="flex items-center gap-3 px-3 py-2.5">

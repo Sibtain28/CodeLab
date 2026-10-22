@@ -1,12 +1,10 @@
 "use client";
 
-import { House, LayoutGrid, Plus, Settings, Star, Users } from "lucide-react";
+import { House, LayoutGrid, Play, Plus, Settings, Star, Users } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { Logo } from "@/components/brand/logo";
-import { LiveDot } from "@/components/ui/primitives";
 import { cn } from "@/lib/cn";
-import type { Project } from "@/lib/mock/projects";
 
 export type DashboardView = "home" | "projects" | "shared" | "starred";
 
@@ -24,25 +22,15 @@ const icons: Record<DashboardView, ReactNode> = {
   starred: <Star />,
 };
 
-function SectionLabel({ children }: { children: ReactNode }) {
-  return (
-    <p className="px-2.5 pb-1.5 font-mono text-[10.5px] uppercase tracking-[0.12em] text-fg-subtle">
-      {children}
-    </p>
-  );
-}
-
 export function Sidebar({
   view,
   onViewChange,
   counts,
-  liveProjects,
   onCreate,
 }: {
   view: DashboardView;
   onViewChange: (v: DashboardView) => void;
   counts: Record<DashboardView, number | null>;
-  liveProjects: Project[];
   onCreate: () => void;
 }) {
   return (
@@ -84,41 +72,15 @@ export function Sidebar({
         ))}
       </nav>
 
-      {liveProjects.length > 0 && (
-        <div className="mt-6 border-t border-line px-2.5 pt-4">
-          <SectionLabel>Live now</SectionLabel>
-          <div className="space-y-px">
-            {liveProjects.map((p) => {
-              const inner = (
-                <>
-                  <LiveDot />
-                  <span className="flex-1 truncate font-mono text-[12.5px]">{p.name}</span>
-                  <span className="font-mono text-[11px] text-fg-subtle">{p.liveCount}</span>
-                </>
-              );
-              return p.hasWorkspace ? (
-                <Link
-                  key={p.id}
-                  href={`/workspace/${p.id}`}
-                  className="flex h-8 items-center gap-2.5 rounded-[7px] px-2.5 text-fg-muted transition-colors duration-150 hover:bg-hover/70 hover:text-fg"
-                >
-                  {inner}
-                </Link>
-              ) : (
-                <div key={p.id} className="flex h-8 items-center gap-2.5 px-2.5 text-fg-subtle">
-                  {inner}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
       <div className="mt-auto space-y-1 border-t border-line p-2.5">
-        <p className="px-2.5 py-2 text-[11.5px] leading-[17px] text-fg-subtle">
-          <span className="font-medium text-fg-muted">Preview data.</span> Projects you create stay
-          in this tab until you reload.
-        </p>
+        <Link
+          href="/workspace/demo"
+          className="flex h-8 w-full items-center gap-2.5 rounded-[7px] px-2.5 text-[13px] text-fg-muted transition-colors duration-150 hover:bg-hover/70 hover:text-fg"
+        >
+          <Play className="h-4 w-4 text-fg-subtle" />
+          <span className="flex-1 text-left">Demo workspace</span>
+          <span className="font-mono text-[10px] uppercase tracking-wider text-fg-subtle">Sample</span>
+        </Link>
         <button
           type="button"
           disabled

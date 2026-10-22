@@ -15,8 +15,8 @@ import { Avatar, AvatarStack } from "@/components/ui/avatar";
 import { Button, IconButton } from "@/components/ui/button";
 import { Badge, MockBadge } from "@/components/ui/primitives";
 import { cn } from "@/lib/cn";
-import { currentUser, peerText, type PeerColor } from "@/lib/mock/people";
-import type { WorkspacePeer } from "@/lib/mock/workspace";
+import { peerText, type PeerColor } from "@/lib/mock/people";
+import type { WorkspaceMe, WorkspacePeer } from "@/lib/mock/workspace";
 
 export interface CallState {
   joined: boolean;
@@ -104,6 +104,7 @@ function CallButton({
 }
 
 export function CollaborationPanel({
+  me,
   peers,
   call,
   onCallChange,
@@ -111,6 +112,7 @@ export function CollaborationPanel({
   onFollow,
   onClose,
 }: {
+  me: WorkspaceMe;
   peers: WorkspacePeer[];
   call: CallState;
   onCallChange: (next: Partial<CallState>) => void;
@@ -136,8 +138,8 @@ export function CollaborationPanel({
   const tiles: Tile[] = [
     {
       id: "me",
-      name: currentUser.name,
-      color: currentUser.color,
+      name: me.name,
+      color: me.color,
       mic: call.mic,
       camera: call.camera,
       isYou: true,
@@ -245,8 +247,8 @@ export function CollaborationPanel({
                 <VideoTile
                   tile={{
                     id: "me",
-                    name: currentUser.name,
-                    color: currentUser.color,
+                    name: me.name,
+                    color: me.color,
                     mic: call.mic,
                     camera: call.camera,
                     isYou: true,
@@ -298,12 +300,12 @@ export function CollaborationPanel({
           </div>
           <ul className="space-y-0.5">
             <li className="flex items-center gap-2.5 rounded-[8px] px-2 py-1.5">
-              <Avatar name={currentUser.name} color={currentUser.color} size="md" status="online" />
+              <Avatar name={me.name} color={me.color} size="md" status="online" />
               <div className="min-w-0 flex-1">
                 <p className="flex items-center gap-1.5 text-[13px] text-fg">
-                  {currentUser.name} <span className="text-fg-subtle">(you)</span>
+                  {me.name} <span className="text-fg-subtle">(you)</span>
                 </p>
-                <p className="text-[11.5px] text-fg-subtle">Owner</p>
+                <p className="text-[11.5px] text-fg-subtle">{me.role}</p>
               </div>
               {call.joined &&
                 (call.mic ? (
@@ -335,6 +337,8 @@ export function CollaborationPanel({
                             {p.file.split("/").pop()}
                           </span>
                         </>
+                      ) : p.status === "offline" ? (
+                        p.role
                       ) : (
                         "Away"
                       )}

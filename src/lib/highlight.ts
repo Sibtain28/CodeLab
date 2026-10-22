@@ -275,7 +275,19 @@ export function monacoLanguage(path: string): string {
       return "json";
     case "markdown":
       return "markdown";
-    default:
-      return "plaintext";
+    default: {
+      // Syntax-only languages Monaco ships with (no language worker needed).
+      const ext = path.split(".").pop()?.toLowerCase();
+      const basic: Record<string, string> = {
+        py: "python",
+        go: "go",
+        rs: "rust",
+        toml: "ini",
+        yml: "yaml",
+        yaml: "yaml",
+        sh: "shell",
+      };
+      return (ext && basic[ext]) || "plaintext";
+    }
   }
 }

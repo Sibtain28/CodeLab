@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronRight, FileCode2, Keyboard } from "lucide-react";
+import { ChevronRight, Eye, FileCode2, Keyboard, LoaderCircle, TriangleAlert } from "lucide-react";
 import {
   useEffect,
   useEffectEvent,
@@ -10,18 +10,17 @@ import {
 } from "react";
 import { LogoMark } from "@/components/brand/logo";
 import { AvatarStack } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
 import { cn } from "@/lib/cn";
 import { languageFromPath, languageLabel } from "@/lib/highlight";
+import type { Problem, WorkspaceMe, WorkspaceMeta, WorkspacePeer } from "@/lib/mock/workspace";
 import {
-  initialFiles,
-  initialOpenTabs,
-  peers,
-  type Problem,
-  type WorkspaceMeta,
-  type WorkspacePeer,
-} from "@/lib/mock/workspace";
+  createFile as createFileAction,
+  readFile as readFileAction,
+  saveFile as saveFileAction,
+} from "@/server/actions/files";
 import { useMediaQuery } from "@/lib/use-media-query";
 import {
   BottomPanel,
@@ -40,6 +39,12 @@ import { StatusBar } from "./status-bar";
 import { Toolbar, type RunState, type Visibility } from "./toolbar";
 
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
+
+function without<T>(record: Record<string, T>, key: string) {
+  const next = { ...record };
+  delete next[key];
+  return next;
+}
 
 const METRIC_CARD = "src/components/MetricCard.tsx";
 const ERROR_SNIPPET = "formatDelta(delta)";
@@ -88,18 +93,50 @@ const initialTerminal: TerminalLine[] = [
   { id: 3, kind: "output", text: "On branch main\nYour branch is up to date with 'origin/main'." },
 ];
 
-export function WorkspaceIDE({ workspace }: { workspace: WorkspaceMeta }) {
+/**
+ * Present for real projects: files are loaded from and saved to the database.
+ * Absent for the public demo, which keeps everything in memory.
+ */
+export interface WorkspacePersistence {
+  projectId: string;
+  canWrite: boolean;
+  /** Saved version of each file, used to detect conflicting saves. */
+  versions: Record<string, number>;
+}
+
+export function WorkspaceIDE({
+  workspace,
+  me,
+  initialFiles,
+  initialTabs,
+  peers,
+  persistence,
+}: {
+  workspace: WorkspaceMeta;
+  me: WorkspaceMe;
+  initialFiles: Record<string, string>;
+  initialTabs: string[];
+  peers: WorkspacePeer[];
+  persistence?: WorkspacePersistence;
+}) {
   const toast = useToast();
+  const isDemo = !persistence;
+  const canWrite = persistence?.canWrite ?? true;
   const isDesktop = useMediaQuery("(min-width: 1024px)");
   // Between 1024px and 1280px three columns leave the editor too narrow, so the
   // collaboration panel starts closed there until the user opens it.
   const isWide = useMediaQuery("(min-width: 1280px)");
 
-  // Files (in-memory only)
+  // Files. `saved` is the last content known to be stored (in the database for
+  // real projects, in memory for the demo); a file is dirty when they differ.
   const [files, setFiles] = useState<Record<string, string>>(initialFiles);
   const [saved, setSaved] = useState<Record<string, string>>(initialFiles);
-  const [tabs, setTabs] = useState<string[]>(initialOpenTabs);
-  const [active, setActive] = useState<string | null>(initialOpenTabs[0]);
+  const [versions, setVersions] = useState<Record<string, number>>(persistence?.versions ?? {});
+  const [saving, setSaving] = useState<Set<string>>(() => new Set());
+  const savingRef = useRef(new Set<string>());
+  const [conflicts, setConflicts] = useState<Record<string, { currentVersion: number }>>({});
+  const [tabs, setTabs] = useState<string[]>(initialTabs);
+  const [active, setActive] = useState<string | null>(initialTabs[0] ?? null);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(allFolders(Object.keys(initialFiles))));
   const [cursor, setCursor] = useState<{ line: number; col: number } | null>({ line: 1, col: 1 });
   const [reveal, setReveal] = useState<{ line: number; nonce: number } | null>(null);
@@ -136,7 +173,8 @@ export function WorkspaceIDE({ workspace }: { workspace: WorkspaceMeta }) {
 
   const paths = useMemo(() => Object.keys(files), [files]);
   const dirty = useMemo(() => new Set(paths.filter((p) => files[p] !== saved[p])), [paths, files, saved]);
-  const problems = useMemo(() => computeProblems(files), [files]);
+  // Sample diagnostics only exist for the demo's seeded file.
+  const problems = useMemo(() => (isDemo ? computeProblems(files) : []), [isDemo, files]);
   const errors = problems.filter((p) => p.severity === "error").length;
   const warnings = problems.length - errors;
 
@@ -150,7 +188,7 @@ export function WorkspaceIDE({ workspace }: { workspace: WorkspaceMeta }) {
       peers
         .filter((p) => p.file === active)
         .flatMap((p) => (p.cursor ? [{ id: p.id, name: p.name.split(" ")[0], color: p.color, ...p.cursor }] : [])),
-    [active],
+    [active, peers],
   );
 
   // ----- Actions -----------------------------------------------------------
@@ -183,27 +221,112 @@ export function WorkspaceIDE({ workspace }: { workspace: WorkspaceMeta }) {
     });
   }
 
-  function createFile(path: string): string | null {
+  async function createFile(path: string): Promise<string | null> {
     if (files[path] !== undefined) return "A file with that path already exists.";
     if (paths.some((p) => p.startsWith(`${path}/`))) return "A folder with that name already exists.";
+    if (paths.some((p) => path.startsWith(`${p}/`))) return "A file with that name is in the way.";
+    if (persistence) {
+      if (!canWrite) return "You have view-only access to this project.";
+      const result = await createFileAction({ projectId: persistence.projectId, path });
+      if (!result.ok) return result.error;
+      setVersions((v) => ({ ...v, [path]: result.version }));
+    }
     setFiles((f) => ({ ...f, [path]: "" }));
+    setSaved((s) => ({ ...s, [path]: "" }));
     setExpanded((s) => new Set([...s, ...allFolders([path])]));
     openFile(path);
     return null;
   }
 
+  const fileName = (path: string) => path.split("/").pop() ?? path;
+
+  /**
+   * Saves one file. Only the content captured when the save starts is marked
+   * as saved, so edits made while the request is in flight stay dirty. A
+   * failed or conflicting save never clears the unsaved indicator.
+   */
+  async function saveFile(path: string, { overwrite = false }: { overwrite?: boolean } = {}) {
+    const content = files[path];
+    if (content === undefined) return;
+
+    if (!persistence) {
+      setSaved((s) => ({ ...s, [path]: content }));
+      toast({
+        title: `Saved ${fileName(path)}`,
+        description: "Demo workspace — saved in this tab only. Reloading resets it.",
+      });
+      return;
+    }
+    if (!canWrite) {
+      toast({ tone: "info", title: "View-only access", description: "You can read this project but not save changes." });
+      return;
+    }
+    if (savingRef.current.has(path)) return; // one save per file at a time
+    savingRef.current.add(path);
+    setSaving(new Set(savingRef.current));
+    try {
+      const result = await saveFileAction({
+        projectId: persistence.projectId,
+        path,
+        content,
+        baseVersion: versions[path] ?? 1,
+        overwrite,
+      });
+      if (result.ok) {
+        setSaved((s) => ({ ...s, [path]: content }));
+        setVersions((v) => ({ ...v, [path]: result.version }));
+        setConflicts((c) => without(c, path));
+        toast({ title: `Saved ${fileName(path)}` });
+      } else if (result.reason === "conflict") {
+        setConflicts((c) => ({ ...c, [path]: { currentVersion: result.currentVersion } }));
+        toast({ tone: "warning", title: `${fileName(path)} wasn't saved`, description: result.error });
+      } else {
+        toast({ tone: "warning", title: `Couldn't save ${fileName(path)}`, description: result.error });
+      }
+    } catch {
+      toast({
+        tone: "warning",
+        title: `Couldn't save ${fileName(path)}`,
+        description: "The server couldn't be reached. Your changes are still here — try ⌘S again.",
+      });
+    } finally {
+      savingRef.current.delete(path);
+      setSaving(new Set(savingRef.current));
+    }
+  }
+
   function saveActive() {
     if (!active) return;
-    if (!dirty.has(active)) {
+    if (!dirty.has(active) && !conflicts[active]) {
       toast({ tone: "info", title: "No changes to save" });
       return;
     }
-    setSaved((s) => ({ ...s, [active]: files[active] }));
-    toast({
-      title: `Saved ${active.split("/").pop()}`,
-      description: "Saved to this browser session only — reloading resets the demo.",
-    });
+    void saveFile(active);
   }
+
+  /** Conflict resolution: replace local edits with the latest saved version. */
+  async function loadSavedVersion(path: string) {
+    if (!persistence) return;
+    const result = await readFileAction({ projectId: persistence.projectId, path }).catch(() => null);
+    if (!result || !result.ok) {
+      toast({ tone: "warning", title: "Couldn't load the saved version", description: result?.error ?? "Try again." });
+      return;
+    }
+    setFiles((f) => ({ ...f, [path]: result.content }));
+    setSaved((s) => ({ ...s, [path]: result.content }));
+    setVersions((v) => ({ ...v, [path]: result.version }));
+    setConflicts((c) => without(c, path));
+    toast({ tone: "info", title: `Loaded the saved ${fileName(path)}`, description: "Your unsaved edits were discarded." });
+  }
+
+  // Warn before leaving a real project with unsaved changes.
+  const hasUnsaved = !isDemo && dirty.size > 0;
+  useEffect(() => {
+    if (!hasUnsaved) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [hasUnsaved]);
 
   function toggleExplorer() {
     if (isDesktop) setExplorerOpen((v) => !v);
@@ -237,11 +360,17 @@ export function WorkspaceIDE({ workspace }: { workspace: WorkspaceMeta }) {
     setRunState("starting");
     const hasError = problems.some((p) => p.severity === "error");
     const errorAt = problems.find((p) => p.severity === "error");
-    const steps: [number, Omit<OutputLine, "id">[], (() => void)?][] = [
+    const steps: [number, Omit<OutputLine, "id">[], (() => void)?][] = !isDemo
+      ? [
+          [0, [{ text: "$ run", tone: "accent" }]],
+          [300, [{ text: "  Simulated run — code execution isn't available yet, nothing was executed.", tone: "muted" }]],
+          [900, [{ text: `  ✓ ${workspace.name}: ${paths.length} files checked`, tone: "success" }], () => setRunState("running")],
+        ]
+      : [
       [0, [{ text: "$ npm run dev", tone: "accent" }]],
       [180, [{ text: "> orbit-dashboard@0.4.2 dev", tone: "muted" }, { text: "> next dev", tone: "muted" }, { text: "" }]],
       [520, [{ text: "  ▲ Next.js 16.4.2 — simulated run, no code is executed" }]],
-      [780, [{ text: "  - Local:   http://localhost:3000 (not served in Phase 1)", tone: "muted" }]],
+      [780, [{ text: "  - Local:   http://localhost:3000 (simulated — nothing is served)", tone: "muted" }]],
       [1150, [{ text: "  ✓ Starting...", tone: "success" }]],
       [1650, [{ text: "  ✓ Ready in 812ms", tone: "success" }], () => setRunState("running")],
       [2200, [{ text: "  ○ Compiling / ...", tone: "muted" }]],
@@ -281,7 +410,10 @@ export function WorkspaceIDE({ workspace }: { workspace: WorkspaceMeta }) {
     const url = `${window.location.origin}/workspace/${workspace.id}`;
     try {
       await navigator.clipboard.writeText(url);
-      toast({ title: "Link copied", description: "Anyone opening it sees the same demo data." });
+      toast({
+        title: "Link copied",
+        description: isDemo ? "Anyone opening it sees the same demo data." : "Only members of this project can open it.",
+      });
       return true;
     } catch {
       toast({ tone: "warning", title: "Couldn't copy the link", description: url });
@@ -345,7 +477,7 @@ export function WorkspaceIDE({ workspace }: { workspace: WorkspaceMeta }) {
         response = [out(`/workspace/${workspace.name}`)];
         break;
       case "whoami":
-        response = [out("darain")];
+        response = [out(me.handle)];
         break;
       case "date":
         response = [out(new Date().toString())];
@@ -375,7 +507,7 @@ export function WorkspaceIDE({ workspace }: { workspace: WorkspaceMeta }) {
           run();
           return;
         }
-        response = [out("npm: package scripts aren't executed in Phase 1. Try `npm run dev` for a simulated run.")];
+        response = [out("npm: package scripts aren't executed yet. Try `npm run dev` for a simulated run.")];
         break;
       default:
         response = [out(`command not found: ${cmd}`)];
@@ -384,7 +516,7 @@ export function WorkspaceIDE({ workspace }: { workspace: WorkspaceMeta }) {
   }
 
   function getFix(problem: Problem): DiagnosticFix | null {
-    if (problem.file !== METRIC_CARD) return null;
+    if (!isDemo || problem.file !== METRIC_CARD) return null;
     const replace = (from: string, to: string) => () => {
       setFiles((f) => ({ ...f, [METRIC_CARD]: f[METRIC_CARD].replace(from, to) }));
       openFile(METRIC_CARD, problem.line);
@@ -477,11 +609,13 @@ export function WorkspaceIDE({ workspace }: { workspace: WorkspaceMeta }) {
       onOpenFile={openFile}
       onCreateFile={createFile}
       peers={peers}
+      readOnly={!canWrite}
     />
   );
 
   const collaboration = (
     <CollaborationPanel
+      me={me}
       peers={peers}
       call={call}
       onCallChange={(next) => setCall((c) => ({ ...c, ...next }))}
@@ -495,6 +629,7 @@ export function WorkspaceIDE({ workspace }: { workspace: WorkspaceMeta }) {
     <div className="flex h-dvh flex-col overflow-hidden bg-sunken">
       <Toolbar
         name={workspace.name}
+        badge={isDemo ? "Sample" : !canWrite ? "View only" : undefined}
         branch={workspace.branch}
         peers={peers}
         explorerOpen={explorerVisible}
@@ -508,7 +643,13 @@ export function WorkspaceIDE({ workspace }: { workspace: WorkspaceMeta }) {
         visibility={visibility}
         onVisibilityChange={(v) => {
           setVisibility(v);
-          toast({ tone: "info", title: "Access updated (UI only)", description: "Permissions are enforced once auth lands." });
+          toast({
+            tone: "info",
+            title: "Not saved yet",
+            description: isDemo
+              ? "Sample workspace — sharing settings are UI only."
+              : "Sharing settings arrive in a later phase. Access stays members-only.",
+          });
         }}
         runState={runState}
         onRun={run}
@@ -545,6 +686,15 @@ export function WorkspaceIDE({ workspace }: { workspace: WorkspaceMeta }) {
                     </span>
                   ))}
                 </span>
+                {saving.has(active) ? (
+                  <span className="flex shrink-0 items-center gap-1.5" role="status">
+                    <LoaderCircle className="h-3 w-3 animate-spin" /> Saving…
+                  </span>
+                ) : !canWrite ? (
+                  <span className="flex shrink-0 items-center gap-1.5">
+                    <Eye className="h-3 w-3" /> View only
+                  </span>
+                ) : null}
                 {peersHere.length > 0 && (
                   <span className="flex shrink-0 items-center gap-2">
                     <AvatarStack people={peersHere} size="xs" />
@@ -555,8 +705,28 @@ export function WorkspaceIDE({ workspace }: { workspace: WorkspaceMeta }) {
                   </span>
                 )}
               </div>
+              {conflicts[active] && (
+                <div
+                  role="alert"
+                  className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-y border-warning/25 bg-[#fbf2e3] px-4 py-2 text-[12.5px]"
+                >
+                  <TriangleAlert className="h-4 w-4 shrink-0 text-warning" />
+                  <p className="min-w-0 flex-1 text-fg-muted">
+                    <span className="font-medium text-fg">A newer version of {fileName(active)} was saved elsewhere.</span>{" "}
+                    Your changes are kept here but haven&apos;t been saved.
+                  </p>
+                  <Button size="xs" variant="ghost" onClick={() => loadSavedVersion(active)}>
+                    Discard mine &amp; load saved
+                  </Button>
+                  <Button size="xs" disabled={saving.has(active)} onClick={() => saveFile(active, { overwrite: true })}>
+                    {saving.has(active) && <LoaderCircle className="h-3 w-3 animate-spin" />}
+                    Overwrite with my version
+                  </Button>
+                </div>
+              )}
               <div className="min-h-0 flex-1">
                 <CodeEditor
+                  readOnly={!canWrite}
                   path={active}
                   value={files[active]}
                   onChange={(v) => setFiles((f) => ({ ...f, [active]: v }))}
@@ -569,7 +739,10 @@ export function WorkspaceIDE({ workspace }: { workspace: WorkspaceMeta }) {
               </div>
             </>
           ) : (
-            <EmptyEditor onOpen={() => openFile("src/components/MetricCard.tsx")} />
+            <EmptyEditor
+              suggestion={isDemo ? METRIC_CARD : (paths.find((p) => p.toLowerCase() === "readme.md") ?? paths[0] ?? null)}
+              onOpen={openFile}
+            />
           )}
 
           {bottomOpen && (
@@ -581,6 +754,7 @@ export function WorkspaceIDE({ workspace }: { workspace: WorkspaceMeta }) {
               />
               <div className="shrink-0" style={{ height: bottomHeight }}>
                 <BottomPanel
+                  prompt={`~/${workspace.name} on ${workspace.branch}`}
                   tab={bottomTab}
                   onTabChange={setBottomTab}
                   onClose={() => setBottomOpen(false)}
@@ -653,6 +827,7 @@ export function WorkspaceIDE({ workspace }: { workspace: WorkspaceMeta }) {
       </div>
 
       <StatusBar
+        persisted={!isDemo}
         branch={workspace.branch}
         errors={errors}
         warnings={warnings}
@@ -671,6 +846,8 @@ export function WorkspaceIDE({ workspace }: { workspace: WorkspaceMeta }) {
       <InviteDialog
         open={inviteOpen}
         onClose={() => setInviteOpen(false)}
+        name={workspace.name}
+        me={me}
         linkPath={`/workspace/${workspace.id}`}
         onCopyLink={copyLink}
         peers={peers}
@@ -685,7 +862,7 @@ export function WorkspaceIDE({ workspace }: { workspace: WorkspaceMeta }) {
   );
 }
 
-function EmptyEditor({ onOpen }: { onOpen: () => void }) {
+function EmptyEditor({ suggestion, onOpen }: { suggestion: string | null; onOpen: (path: string) => void }) {
   const shortcuts = [
     { keys: ["⌘", "B"], label: "Toggle explorer" },
     { keys: ["⌘", "J"], label: "Toggle panel" },
@@ -697,13 +874,15 @@ function EmptyEditor({ onOpen }: { onOpen: () => void }) {
         <LogoMark size={40} />
         <p className="mt-5 text-[15px] font-semibold text-fg">No file open</p>
         <p className="mt-1 text-[13px] text-fg-subtle">Pick a file from the explorer to start editing.</p>
-        <button
-          type="button"
-          onClick={onOpen}
-          className="mt-4 inline-flex items-center gap-1.5 rounded-md text-[13px] font-medium text-accent hover:text-accent-strong"
-        >
-          <FileCode2 className="h-3.5 w-3.5" /> Open MetricCard.tsx
-        </button>
+        {suggestion && (
+          <button
+            type="button"
+            onClick={() => onOpen(suggestion)}
+            className="mt-4 inline-flex items-center gap-1.5 rounded-md text-[13px] font-medium text-accent hover:text-accent-strong"
+          >
+            <FileCode2 className="h-3.5 w-3.5" /> Open {suggestion.split("/").pop()}
+          </button>
+        )}
         <ul className="mt-8 w-full divide-y divide-line border-y border-line text-[12.5px] text-fg-subtle">
           {shortcuts.map((s) => (
             <li key={s.label} className="flex items-center justify-between py-2">

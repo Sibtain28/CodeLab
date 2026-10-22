@@ -1,10 +1,11 @@
 "use client";
 
-import { CircleX, GitBranch, Radio, TriangleAlert, Video } from "lucide-react";
+import { CircleX, Cloud, GitBranch, Radio, TriangleAlert, Video } from "lucide-react";
 import { cn } from "@/lib/cn";
 import type { RunState } from "./toolbar";
 
 export function StatusBar({
+  persisted = false,
   branch,
   errors,
   warnings,
@@ -16,6 +17,7 @@ export function StatusBar({
   callCount,
   dirtyCount,
 }: {
+  persisted?: boolean;
   branch: string;
   errors: number;
   warnings: number;
@@ -68,9 +70,15 @@ export function StatusBar({
         <span className="hidden md:inline">Spaces: 2</span>
         <span className="hidden md:inline">UTF-8</span>
         {language && <span className="hidden sm:inline">{language}</span>}
-        <span className="hidden items-center gap-1 lg:flex" title="Real-time sync arrives with Yjs">
-          <Radio className="h-3 w-3" /> Local session
-        </span>
+        {persisted ? (
+          <span className="hidden items-center gap-1 lg:flex" title="⌘S saves to your account. Real-time sync arrives with Yjs.">
+            <Cloud className="h-3 w-3" /> Saved with ⌘S
+          </span>
+        ) : (
+          <span className="hidden items-center gap-1 lg:flex" title="Sample workspace — nothing is saved. Real-time sync arrives with Yjs.">
+            <Radio className="h-3 w-3" /> Local session
+          </span>
+        )}
       </div>
     </footer>
   );

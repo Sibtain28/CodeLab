@@ -1,11 +1,10 @@
 "use client";
 
-import { ArrowRight, Menu as MenuIcon, X } from "lucide-react";
+import { Menu as MenuIcon, X } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { Logo } from "@/components/brand/logo";
-import { ButtonLink, buttonClasses } from "@/components/ui/button";
-import { Menu } from "@/components/ui/menu";
+import { ButtonLink } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 
 const nav = [
@@ -13,21 +12,6 @@ const nav = [
   { href: "/#features", label: "Features" },
   { href: "/docs", label: "Documentation" },
 ];
-
-function SignInNote() {
-  return (
-    <div className="w-72 p-3">
-      <p className="text-[13px] font-medium text-fg">Accounts are on the way</p>
-      <p className="mt-1 text-[12.5px] leading-5 text-fg-subtle">
-        Sign-in arrives in the next phase. Until then the dashboard runs on sample data — no
-        account needed.
-      </p>
-      <ButtonLink href="/dashboard" variant="secondary" size="sm" className="mt-3 w-full">
-        Continue to dashboard <ArrowRight className="h-3.5 w-3.5" />
-      </ButtonLink>
-    </div>
-  );
-}
 
 export function SiteHeader() {
   const [open, setOpen] = useState(false);
@@ -50,21 +34,9 @@ export function SiteHeader() {
           </nav>
         </div>
         <div className="hidden items-center gap-1.5 md:flex">
-          <Menu
-            label="Sign in"
-            trigger={({ toggle, open: menuOpen, ...aria }) => (
-              <button
-                type="button"
-                onClick={toggle}
-                {...aria}
-                className={cn(buttonClasses({ variant: "ghost", size: "sm" }), menuOpen && "bg-hover text-fg")}
-              >
-                Sign in
-              </button>
-            )}
-          >
-            {() => <SignInNote />}
-          </Menu>
+          <ButtonLink href="/login" variant="ghost" size="sm">
+            Sign in
+          </ButtonLink>
           <ButtonLink href="/dashboard" variant="primary" size="sm">
             Open your workspace
           </ButtonLink>
@@ -106,9 +78,9 @@ export function SiteHeader() {
             <ButtonLink href="/dashboard" variant="primary" size="lg" onClick={() => setOpen(false)}>
               Open your workspace
             </ButtonLink>
-            <p className="text-center text-[12px] text-fg-subtle">
-              Sign-in arrives in the next phase — the dashboard runs on sample data.
-            </p>
+            <ButtonLink href="/login" variant="secondary" size="lg" onClick={() => setOpen(false)}>
+              Sign in
+            </ButtonLink>
           </div>
         </div>
       </nav>

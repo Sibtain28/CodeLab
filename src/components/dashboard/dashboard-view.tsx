@@ -3,54 +3,64 @@
 import {
   Check,
   ChevronDown,
+  CloudOff,
   LayoutGrid,
   Link2,
   List,
   Menu as MenuIcon,
   Plus,
+  RotateCw,
   Search,
   Star,
   X,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { AvatarStack } from "@/components/ui/avatar";
-import { Button, ButtonLink, IconButton, buttonClasses } from "@/components/ui/button";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { Button, IconButton, buttonClasses } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Menu, MenuItem, MenuLabel } from "@/components/ui/menu";
-import { Kbd, LiveDot } from "@/components/ui/primitives";
+import { Kbd } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
 import { cn } from "@/lib/cn";
-import {
-  languageMeta,
-  projects as seedProjects,
-  type Language,
-  type Project,
-} from "@/lib/mock/projects";
+import { LANGUAGES, languageMeta, type Language, type ProjectSummary } from "@/lib/projects";
+import { createProject as createProjectAction, setProjectStar } from "@/server/actions/projects";
 import {
   CreateProjectDialog,
   JoinWorkspaceDialog,
   ShortcutsDialog,
-  type NewProjectInput,
+  type CreateProjectHandler,
 } from "./dialogs";
 import { ProfileMenu } from "./profile-menu";
 import { ProjectCard, ProjectRow } from "./project-card";
 import { Sidebar, viewLabels, type DashboardView as View } from "./sidebar";
 
-const languages = Object.keys(languageMeta) as Language[];
+const languages = LANGUAGES;
 
 function isTypingTarget(target: EventTarget | null) {
   const el = target as HTMLElement | null;
   return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
 }
 
-export function DashboardView() {
+export function DashboardView({
+  user,
+  projects: serverProjects,
+  loadError = false,
+}: {
+  user: { name: string; email: string };
+  projects: ProjectSummary[];
+  loadError?: boolean;
+}) {
   const router = useRouter();
   const toast = useToast();
   const searchRef = useRef<HTMLInputElement>(null);
-  const localCounter = useRef(1);
+  const [refreshing, startRefresh] = useTransition();
 
-  const [projects, setProjects] = useState<Project[]>(seedProjects);
+  // Optimistic star state layered over the server data until it refreshes.
+  const [starOverrides, setStarOverrides] = useState<Record<string, boolean>>({});
+  const projects = useMemo(
+    () => serverProjects.map((p) => (p.id in starOverrides ? { ...p, starred: starOverrides[p.id] } : p)),
+    [serverProjects, starOverrides],
+  );
   const [view, setView] = useState<View>("home");
   const [query, setQuery] = useState("");
   const [language, setLanguage] = useState<Language | "all">("all");
@@ -78,7 +88,7 @@ export function DashboardView() {
     () => ({
       home: null,
       projects: projects.length,
-      shared: projects.filter((p) => p.ownership === "shared").length,
+      shared: projects.filter((p) => p.role !== "Owner").length,
       starred: projects.filter((p) => p.starred).length,
     }),
     [projects],
@@ -87,7 +97,7 @@ export function DashboardView() {
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     return projects.filter((p) => {
-      if (view === "shared" && p.ownership !== "shared") return false;
+      if (view === "shared" && p.role === "Owner") return false;
       if (view === "starred" && !p.starred) return false;
       if (language !== "all" && p.language !== language) return false;
       if (!q) return true;
@@ -95,60 +105,50 @@ export function DashboardView() {
     });
   }, [projects, view, query, language]);
 
-  const liveProjects = projects.filter((p) => p.liveCount > 0);
-  const demo = projects.find((p) => p.hasWorkspace);
-
   function changeView(v: View) {
     setView(v);
     setMobileNavOpen(false);
   }
 
-  function toggleStar(id: string) {
-    setProjects((all) => all.map((p) => (p.id === id ? { ...p, starred: !p.starred } : p)));
+  async function toggleStar(id: string) {
+    const project = projects.find((p) => p.id === id);
+    if (!project) return;
+    const starred = !project.starred;
+    setStarOverrides((o) => ({ ...o, [id]: starred }));
+    try {
+      const result = await setProjectStar({ projectId: id, starred });
+      if (!result.ok) throw new Error(result.error);
+      startRefresh(() => router.refresh());
+    } catch (error) {
+      setStarOverrides((o) => ({ ...o, [id]: !starred }));
+      toast({
+        tone: "warning",
+        title: `Couldn't ${starred ? "star" : "unstar"} ${project.name}`,
+        description: error instanceof Error ? error.message : "Please try again.",
+      });
+    }
   }
 
-  function openUnavailable(project: Project) {
-    toast({
-      tone: "info",
-      title: `${project.name} is sample data`,
-      description: "Only the demo workspace opens in this preview. Real projects arrive with persistence.",
-      action: { label: "Open demo workspace", onClick: () => router.push("/workspace/demo") },
-    });
-  }
-
-  function createProject(input: NewProjectInput) {
-    const project: Project = {
-      id: `local-${localCounter.current++}`,
-      name: input.name,
-      description: input.description,
-      language: input.language,
-      framework: input.framework,
-      lastEdited: "just now",
-      lastEditedBy: "You",
-      collaborators: [],
-      liveCount: 0,
-      ownership: "owned",
-      starred: false,
-      hasWorkspace: false,
-      local: true,
-    };
-    setProjects((all) => [project, ...all]);
+  const createProject: CreateProjectHandler = async (input) => {
+    const result = await createProjectAction(input);
+    if (!result.ok) return { error: result.error, field: result.field };
     setCreateOpen(false);
     setQuery("");
     setLanguage("all");
     if (view === "shared" || view === "starred") setView("projects");
+    startRefresh(() => router.refresh());
     toast({
       title: `Created ${input.name}`,
-      description: "Kept in this tab only — saving arrives with PostgreSQL + Prisma.",
+      description: "Saved to your account.",
+      action: { label: "Open", onClick: () => router.push(`/workspace/${result.data.id}`) },
     });
-  }
+  };
 
   const sidebar = (
     <Sidebar
       view={view}
       onViewChange={changeView}
       counts={counts}
-      liveProjects={liveProjects}
       onCreate={() => {
         setMobileNavOpen(false);
         setCreateOpen(true);
@@ -234,7 +234,7 @@ export function DashboardView() {
                 <span className="hidden sm:inline">New project</span>
               </Button>
               <span className="mx-1 hidden h-5 w-px bg-line sm:block" />
-              <ProfileMenu onShowShortcuts={() => setShortcutsOpen(true)} />
+              <ProfileMenu user={user} onShowShortcuts={() => setShortcutsOpen(true)} />
             </div>
           </header>
 
@@ -244,7 +244,7 @@ export function DashboardView() {
                 <h1 className="text-[22px] font-semibold tracking-[-0.025em] sm:text-[24px]">{viewLabels[view]}</h1>
                 <p className="mt-1 text-[14px] text-fg-subtle">
                   {view === "home"
-                    ? "Recent projects and sessions your team has open."
+                    ? `Welcome, ${user.name.split(" ")[0]}. Your most recently edited projects.`
                     : view === "shared"
                       ? "Projects teammates have invited you to."
                       : view === "starred"
@@ -252,26 +252,6 @@ export function DashboardView() {
                         : "Every project you own or have been invited to."}
                 </p>
 
-                {view === "home" && demo && demo.liveCount > 0 && (
-                  <div className="mt-6 flex flex-col gap-3 rounded-[10px] border border-line px-4 py-3 sm:flex-row sm:items-center">
-                    <div className="flex min-w-0 flex-1 items-start gap-3">
-                      <LiveDot className="mt-[7px]" />
-                      <div className="min-w-0">
-                        <p className="truncate text-[13.5px] text-fg">
-                          <span className="font-mono font-medium">{demo.name}</span>
-                          <span className="text-fg-muted"> · session in progress</span>
-                        </p>
-                        <p className="text-[12.5px] text-fg-subtle">Priya is editing MetricCard.tsx · call running</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3 pl-[18px] sm:pl-0">
-                      <AvatarStack people={demo.collaborators.slice(0, 3)} size="sm" />
-                      <ButtonLink href="/workspace/demo" variant="secondary" size="sm">
-                        Rejoin session
-                      </ButtonLink>
-                    </div>
-                  </div>
-                )}
               </section>
 
               <section aria-labelledby="projects-heading" className="mt-9">
@@ -354,7 +334,18 @@ export function DashboardView() {
                   </div>
                 </div>
 
-                {listed.length === 0 ? (
+                {loadError ? (
+                  <EmptyState
+                    icon={<CloudOff />}
+                    title="Couldn’t load your projects"
+                    description="The database didn’t respond. Your projects are safe — try again in a moment."
+                    action={
+                      <Button size="sm" disabled={refreshing} onClick={() => startRefresh(() => router.refresh())}>
+                        <RotateCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} /> Try again
+                      </Button>
+                    }
+                  />
+                ) : listed.length === 0 ? (
                   filtered ? (
                     <EmptyState
                       icon={<Search />}
@@ -380,7 +371,7 @@ export function DashboardView() {
                     <EmptyState
                       icon={<Star />}
                       title="No starred projects yet"
-                      description="Star a project to pin it here. Stars are kept for this session only."
+                      description="Star a project to pin it here."
                       action={
                         <Button size="sm" onClick={() => changeView("projects")}>
                           Browse projects
@@ -390,15 +381,19 @@ export function DashboardView() {
                   ) : (
                     <EmptyState
                       icon={<LayoutGrid />}
-                      title="No projects here"
-                      description="Create a project or join a teammate’s workspace to get started."
+                      title={view === "shared" ? "Nothing shared with you yet" : "No projects yet"}
+                      description={
+                        view === "shared"
+                          ? "Projects other people add you to will appear here."
+                          : "Create your first project — it’s saved to your account. Or explore the sample demo workspace."
+                      }
                       action={
                         <>
                           <Button size="sm" variant="primary" onClick={() => setCreateOpen(true)}>
                             New project
                           </Button>
-                          <Button size="sm" onClick={() => setJoinOpen(true)}>
-                            Join workspace
+                          <Button size="sm" onClick={() => router.push("/workspace/demo")}>
+                            Open demo
                           </Button>
                         </>
                       }
@@ -407,7 +402,7 @@ export function DashboardView() {
                 ) : layout === "grid" ? (
                   <div key="grid" className="grid animate-fade-in gap-3 sm:grid-cols-2 xl:grid-cols-3">
                     {listed.map((p) => (
-                      <ProjectCard key={p.id} project={p} onToggleStar={toggleStar} onOpenUnavailable={openUnavailable} />
+                      <ProjectCard key={p.id} project={p} onToggleStar={toggleStar} />
                     ))}
                   </div>
                 ) : (
@@ -426,7 +421,7 @@ export function DashboardView() {
                     </div>
                     <div className="divide-y divide-line">
                       {listed.map((p) => (
-                        <ProjectRow key={p.id} project={p} onToggleStar={toggleStar} onOpenUnavailable={openUnavailable} />
+                        <ProjectRow key={p.id} project={p} onToggleStar={toggleStar} />
                       ))}
                     </div>
                   </div>

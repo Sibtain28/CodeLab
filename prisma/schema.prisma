@@ -1,0 +1,150 @@
+// CodeLab database schema.
+// The first four models are the tables Better Auth needs (user, session,
+// account, verification). The rest is CodeLab's own data.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Better Auth ────────────────────────────────────────────────────────────
+
+model User {
+  id            String    @id
+  name          String
+  email         String    @unique
+  emailVerified Boolean   @default(false)
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  sessions      Session[]
+  accounts      Account[]
+
+  ownedProjects Project[]       @relation("ProjectOwner")
+  memberships   ProjectMember[]
+  editedFiles   ProjectFile[]   @relation("FileEditor")
+
+  @@map("user")
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}
+
+// ─── CodeLab ────────────────────────────────────────────────────────────────
+
+enum ProjectVisibility {
+  PRIVATE
+  TEAM
+  PUBLIC
+}
+
+enum MemberRole {
+  OWNER
+  EDITOR
+  VIEWER
+}
+
+model Project {
+  id          String            @id @default(cuid())
+  /// URL-safe slug, unique per owner.
+  name        String
+  description String            @default("")
+  language    String
+  framework   String            @default("")
+  /// Stored for later phases. Access today is membership-only.
+  visibility  ProjectVisibility @default(PRIVATE)
+  ownerId     String
+  owner       User              @relation("ProjectOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  members ProjectMember[]
+  files   ProjectFile[]
+
+  @@unique([ownerId, name])
+  @@map("project")
+}
+
+/// Every user with access to a project has exactly one row here, including
+/// the owner (role OWNER). All authorization checks go through this table.
+model ProjectMember {
+  id        String     @id @default(cuid())
+  projectId String
+  project   Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      MemberRole @default(EDITOR)
+  /// Per-user dashboard star.
+  starred   Boolean    @default(false)
+  createdAt DateTime   @default(now())
+
+  @@unique([projectId, userId])
+  @@index([userId])
+  @@map("project_member")
+}
+
+model ProjectFile {
+  id          String   @id @default(cuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  /// Relative path inside the project, e.g. "src/app.tsx".
+  path        String
+  content     String   @db.Text
+  /// Incremented on every save; used to reject saves based on stale content.
+  version     Int      @default(1)
+  updatedById String?
+  updatedBy   User?    @relation("FileEditor", fields: [updatedById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([projectId, path])
+  @@map("project_file")
+}

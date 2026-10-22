@@ -42,7 +42,6 @@ const toneCls: Record<NonNullable<OutputLine["tone"]>, string> = {
   accent: "text-accent",
 };
 
-export const PROMPT = "~/orbit-dashboard on main";
 
 export function BottomPanel({
   tab,
@@ -57,7 +56,10 @@ export function BottomPanel({
   onOpenProblem,
   getFix,
   running,
+  prompt,
 }: {
+  /** Terminal prompt, e.g. "~/my-project on main". */
+  prompt: string;
   tab: BottomTab;
   onTabChange: (t: BottomTab) => void;
   onClose: () => void;
@@ -130,7 +132,7 @@ export function BottomPanel({
       </div>
 
       <div className="min-h-0 flex-1">
-        {tab === "terminal" && <Terminal lines={terminal} onCommand={onTerminalCommand} />}
+        {tab === "terminal" && <Terminal prompt={prompt} lines={terminal} onCommand={onTerminalCommand} />}
         {tab === "output" && <Output lines={output} running={running} />}
         {tab === "problems" && (
           <Problems problems={problems} onOpen={onOpenProblem} getFix={getFix} />
@@ -150,9 +152,11 @@ function useAutoScroll(dep: unknown) {
 }
 
 function Terminal({
+  prompt,
   lines,
   onCommand,
 }: {
+  prompt: string;
   lines: TerminalLine[];
   onCommand: (cmd: string) => void;
 }) {
@@ -182,7 +186,7 @@ function Terminal({
         >
           {l.kind === "input" ? (
             <>
-              <span className="text-accent">{PROMPT}</span> <span className="text-fg-faint">❯</span> {l.text}
+              <span className="text-accent">{prompt}</span> <span className="text-fg-faint">❯</span> {l.text}
             </>
           ) : (
             l.text
@@ -201,7 +205,7 @@ function Terminal({
         }}
       >
         <label htmlFor="terminal-input" className="shrink-0">
-          <span className="text-accent">{PROMPT}</span> <span className="text-fg-faint">❯</span>
+          <span className="text-accent">{prompt}</span> <span className="text-fg-faint">❯</span>
         </label>
         <input
           id="terminal-input"

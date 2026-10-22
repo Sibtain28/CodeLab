@@ -21,6 +21,7 @@ import { LogoMark } from "@/components/brand/logo";
 import { AvatarStack } from "@/components/ui/avatar";
 import { Button, IconButton, buttonClasses } from "@/components/ui/button";
 import { Menu, MenuItem, MenuLabel, MenuSeparator } from "@/components/ui/menu";
+import { Badge } from "@/components/ui/primitives";
 import { cn } from "@/lib/cn";
 import type { WorkspacePeer } from "@/lib/mock/workspace";
 
@@ -34,6 +35,7 @@ const visibilityOptions: { id: Visibility; label: string; icon: typeof Lock; hin
 ];
 
 export function Toolbar({
+  badge,
   name,
   branch,
   peers,
@@ -52,6 +54,8 @@ export function Toolbar({
   onStop,
 }: {
   name: string;
+  /** Short label next to the name, e.g. "Sample" for the demo. */
+  badge?: string;
   branch: string;
   peers: WorkspacePeer[];
   explorerOpen: boolean;
@@ -86,6 +90,7 @@ export function Toolbar({
         </Link>
         <ChevronRight className="hidden h-3.5 w-3.5 shrink-0 text-fg-faint md:block" />
         <span className="truncate font-medium text-fg">{name}</span>
+        {badge && <Badge>{badge}</Badge>}
         <span className="hidden shrink-0 items-center rounded-[5px] bg-raised px-1.5 font-mono text-[11px] leading-[18px] text-fg-subtle sm:inline-flex">
           {branch}
         </span>

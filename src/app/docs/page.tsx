@@ -15,15 +15,15 @@ const shortcuts: { keys: string[]; label: string }[] = [
   { keys: ["⌘", "J"], label: "Toggle terminal panel" },
   { keys: ["⌘", "⇧", "K"], label: "Toggle collaboration panel" },
   { keys: ["⌘", "↵"], label: "Run / stop the project" },
-  { keys: ["⌘", "S"], label: "Save the current file (this session)" },
+  { keys: ["⌘", "S"], label: "Save the current file" },
 ];
 
 const status: { area: string; now: string; next: string }[] = [
-  { area: "Editor", now: "Monaco editor; files live in the open tab", next: "Saved to PostgreSQL + Prisma" },
+  { area: "Editor", now: "Monaco editor; ⌘S saves your project files to PostgreSQL", next: "Live co-editing with Yjs" },
   { area: "Collaboration", now: "Sample cursors and presence", next: "Real-time sync with Yjs" },
   { area: "Calls", now: "Call controls, no camera or microphone access", next: "Audio and video with LiveKit" },
   { area: "Terminal & Run", now: "Simulated in the browser", next: "Sandboxed execution" },
-  { area: "Accounts & data", now: "Sample data, kept in the open tab", next: "Sign-in, PostgreSQL + Prisma" },
+  { area: "Accounts & data", now: "Email sign-in; projects and files saved to your account", next: "Invites and sharing" },
 ];
 
 export default function DocsPage() {
@@ -37,9 +37,9 @@ export default function DocsPage() {
             Getting started with the preview
           </h1>
           <p className="mt-5 text-[16.5px] leading-7 text-fg-muted">
-            CodeLab is being built in phases. This preview is the complete interface running on
-            sample data, so you can explore how the product works before accounts, storage and
-            live collaboration are switched on.
+            CodeLab is being built in phases. Accounts and saved projects work today; live
+            collaboration, calls and code execution are still simulated. The demo workspace runs on
+            sample data so you can explore without signing in.
           </p>
 
           <section className="mt-14">
@@ -47,23 +47,23 @@ export default function DocsPage() {
             <ol className="mt-4 space-y-3 text-[15px] leading-7 text-fg-muted">
               <li>
                 <span className="mr-2 font-mono text-[12px] text-fg-faint">01</span>
-                Open the dashboard to browse sample projects and create your own (kept in the tab).
+                Create an account, then create a project from the dashboard — it&apos;s saved to your account.
               </li>
               <li>
                 <span className="mr-2 font-mono text-[12px] text-fg-faint">02</span>
-                Join the demo workspace with the code <code className="rounded bg-raised px-1 font-mono text-[13px] text-fg">demo</code>.
+                Edit a file and press <Kbd>⌘</Kbd> <Kbd>S</Kbd> to save it. It&apos;s still there after you reload or sign in again.
               </li>
               <li>
                 <span className="mr-2 font-mono text-[12px] text-fg-faint">03</span>
-                Edit a file, run the project, and use the Problems tab to walk through an error.
+                Open the sample demo workspace to try the Problems tab, simulated runs and collaboration UI.
               </li>
             </ol>
             <div className="mt-6 flex flex-wrap gap-3">
-              <ButtonLink href="/workspace/demo" variant="primary">
-                Open the demo workspace
+              <ButtonLink href="/signup" variant="primary">
+                Create an account
               </ButtonLink>
-              <ButtonLink href="/dashboard" variant="secondary">
-                Go to dashboard <ArrowRight className="h-4 w-4" />
+              <ButtonLink href="/workspace/demo" variant="secondary">
+                Open the demo workspace <ArrowRight className="h-4 w-4" />
               </ButtonLink>
             </div>
           </section>

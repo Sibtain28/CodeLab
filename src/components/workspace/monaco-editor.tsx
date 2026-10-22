@@ -40,6 +40,8 @@ export interface MonacoCodeEditorProps {
   problems: Problem[];
   /** When `nonce` changes, scroll the given line into view. */
   reveal?: { line: number; nonce: number } | null;
+  /** View-only access: the buffer can be read and selected but not edited. */
+  readOnly?: boolean;
 }
 
 /** Model URIs need a scheme; the file extension drives TSX parsing. */
@@ -97,6 +99,7 @@ export default function MonacoCodeEditor({
   peers,
   problems,
   reveal,
+  readOnly = false,
 }: MonacoCodeEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<MonacoEditorNS.IStandaloneCodeEditor | null>(null);
@@ -254,6 +257,10 @@ export default function MonacoCodeEditor({
       widgets.forEach((w) => editor.removeContentWidget(w));
     };
   }, [peers, path]);
+
+  useEffect(() => {
+    editorRef.current?.updateOptions({ readOnly });
+  }, [readOnly]);
 
   // Jump to a line (problem click, "follow" a teammate).
   useEffect(() => {

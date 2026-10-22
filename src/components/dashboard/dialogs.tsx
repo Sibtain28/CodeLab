@@ -1,34 +1,33 @@
 "use client";
 
-import { ArrowRight, Globe, Lock, Users } from "lucide-react";
+import { ArrowRight, Globe, LoaderCircle, Lock, Users } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Field, Modal, ModalActions, inputClasses } from "@/components/ui/modal";
 import { Kbd } from "@/components/ui/primitives";
 import { cn } from "@/lib/cn";
-import { languageMeta, type Language } from "@/lib/mock/projects";
+import {
+  LANGUAGES,
+  PROJECT_DESCRIPTION_MAX,
+  PROJECT_NAME_PATTERN,
+  slugifyProjectName,
+  type Language,
+  type Visibility,
+} from "@/lib/projects";
 import { LanguageGlyph } from "./project-card";
-
-const languages = Object.keys(languageMeta) as Language[];
-
-const frameworks: Record<Language, string> = {
-  TypeScript: "Next.js",
-  JavaScript: "Node.js",
-  Python: "FastAPI",
-  Go: "net/http",
-  Rust: "Axum",
-};
 
 export interface NewProjectInput {
   name: string;
   description: string;
   language: Language;
-  framework: string;
-  visibility: "private" | "team" | "public";
+  visibility: Visibility;
 }
 
-const NAME_PATTERN = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/;
+/** Resolves with an error to show, or nothing on success. */
+export type CreateProjectHandler = (
+  input: NewProjectInput,
+) => Promise<{ error: string; field?: string } | void>;
 
 export function CreateProjectDialog({
   open,
@@ -38,7 +37,7 @@ export function CreateProjectDialog({
 }: {
   open: boolean;
   onClose: () => void;
-  onCreate: (input: NewProjectInput) => void;
+  onCreate: CreateProjectHandler;
   existingNames: string[];
 }) {
   return (
@@ -46,7 +45,7 @@ export function CreateProjectDialog({
       open={open}
       onClose={onClose}
       title="Create a project"
-      description="Projects created in Phase 1 live in this browser tab only — nothing is saved yet."
+      description="Projects are saved to your account and start with a few starter files."
     >
       <CreateProjectForm onClose={onClose} onCreate={onCreate} existingNames={existingNames} />
     </Modal>
@@ -59,35 +58,42 @@ function CreateProjectForm({
   existingNames,
 }: {
   onClose: () => void;
-  onCreate: (input: NewProjectInput) => void;
+  onCreate: CreateProjectHandler;
   existingNames: string[];
 }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [language, setLanguage] = useState<Language>("TypeScript");
-  const [visibility, setVisibility] = useState<NewProjectInput["visibility"]>("team");
+  const [visibility, setVisibility] = useState<Visibility>("private");
   const [touched, setTouched] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [serverError, setServerError] = useState<{ error: string; field?: string } | null>(null);
 
-  const slug = name.trim().toLowerCase().replace(/\s+/g, "-");
-  const error = !slug
+  const slug = slugifyProjectName(name);
+  const nameError = !slug
     ? "Give your project a name."
-    : !NAME_PATTERN.test(slug)
+    : !PROJECT_NAME_PATTERN.test(slug)
       ? "Use 3–40 lowercase letters, numbers or dashes."
       : existingNames.includes(slug)
-        ? "A project with this name already exists."
+        ? "You already have a project with this name."
         : null;
+  const descriptionError =
+    description.trim().length > PROJECT_DESCRIPTION_MAX ? `Use ${PROJECT_DESCRIPTION_MAX} characters or fewer.` : null;
 
-  function submit(e: FormEvent) {
+  async function submit(e: FormEvent) {
     e.preventDefault();
     setTouched(true);
-    if (error) return;
-    onCreate({
-      name: slug,
-      description: description.trim() || "A fresh CodeLab project.",
-      language,
-      framework: frameworks[language],
-      visibility,
-    });
+    if (nameError || descriptionError || pending) return;
+    setPending(true);
+    setServerError(null);
+    try {
+      const result = await onCreate({ name: slug, description: description.trim(), language, visibility });
+      if (result) setServerError(result);
+    } catch {
+      setServerError({ error: "Couldn't reach the server. Check your connection and try again." });
+    } finally {
+      setPending(false);
+    }
   }
 
   return (
@@ -95,14 +101,17 @@ function CreateProjectForm({
       <Field
         label="Project name"
         htmlFor="project-name"
-        error={touched ? error : null}
+        error={touched ? (nameError ?? (serverError?.field === "name" ? serverError.error : null)) : null}
         hint={slug ? <span className="font-mono">{slug}</span> : "Lowercase, dashes allowed."}
       >
         <input
           id="project-name"
           data-autofocus
           value={name}
-          onChange={(e) => setName(e.target.value)}
+          onChange={(e) => {
+            setName(e.target.value);
+            if (serverError?.field === "name") setServerError(null);
+          }}
           onBlur={() => setTouched(true)}
           placeholder="realtime-notes"
           autoComplete="off"
@@ -111,12 +120,13 @@ function CreateProjectForm({
         />
       </Field>
 
-      <Field label="Description" htmlFor="project-description" hint="Optional">
+      <Field label="Description" htmlFor="project-description" hint="Optional" error={descriptionError}>
         <input
           id="project-description"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           placeholder="What are you building?"
+          maxLength={PROJECT_DESCRIPTION_MAX + 20}
           className={inputClasses}
         />
       </Field>
@@ -124,7 +134,7 @@ function CreateProjectForm({
       <fieldset>
         <legend className="mb-1.5 text-[12.5px] font-medium text-fg-muted">Language</legend>
         <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
-          {languages.map((lang) => (
+          {LANGUAGES.map((lang) => (
             <label
               key={lang}
               className={cn(
@@ -155,7 +165,7 @@ function CreateProjectForm({
           {(
             [
               { id: "private", label: "Private", icon: Lock, hint: "Only you" },
-              { id: "team", label: "Team", icon: Users, hint: "Invited members" },
+              { id: "team", label: "Team", icon: Users, hint: "Members you add" },
               { id: "public", label: "Public", icon: Globe, hint: "Anyone with link" },
             ] as const
           ).map((opt) => (
@@ -186,25 +196,36 @@ function CreateProjectForm({
             </label>
           ))}
         </div>
+        <p className="mt-2 text-[12px] leading-[17px] text-fg-subtle">
+          Saved with the project. For now every project is members-only — sharing and public links
+          arrive in a later phase.
+        </p>
       </fieldset>
+
+      {serverError && serverError.field !== "name" && (
+        <p role="alert" className="text-[12.5px] text-danger">
+          {serverError.error}
+        </p>
+      )}
 
       <ModalActions>
         <Button variant="ghost" size="sm" onClick={onClose}>
           Cancel
         </Button>
-        <Button type="submit" variant="primary" size="sm">
-          Create project
+        <Button type="submit" variant="primary" size="sm" disabled={pending}>
+          {pending && <LoaderCircle className="h-3.5 w-3.5 animate-spin" />}
+          {pending ? "Creating…" : "Create project"}
         </Button>
       </ModalActions>
     </form>
   );
 }
 
-/** Pulls a workspace id out of a pasted invite link or raw code. */
+/** Pulls a workspace id out of a pasted workspace link or raw id. */
 function parseWorkspaceCode(value: string): string {
   const trimmed = value.trim();
   const match = /workspace\/([\w-]+)/.exec(trimmed);
-  return (match ? match[1] : trimmed).toLowerCase();
+  return match ? match[1] : trimmed;
 }
 
 export function JoinWorkspaceDialog({
@@ -219,7 +240,7 @@ export function JoinWorkspaceDialog({
       open={open}
       onClose={onClose}
       title="Join a workspace"
-      description="Paste an invite link or enter a workspace code."
+      description="Paste a workspace link or id. You can open workspaces you’re a member of."
       width="md"
     >
       <JoinWorkspaceForm onClose={onClose} />
@@ -236,21 +257,21 @@ function JoinWorkspaceForm({ onClose }: { onClose: () => void }) {
     e.preventDefault();
     const code = parseWorkspaceCode(value);
     if (!code) {
-      setError("Enter an invite link or code.");
+      setError("Enter a workspace link or id.");
       return;
     }
-    // Phase 1: only the mock demo workspace exists.
-    if (code !== "demo") {
-      setError(`No workspace found for “${code}”. Only the demo workspace exists in this preview.`);
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(code)) {
+      setError("That doesn’t look like a workspace link or id.");
       return;
     }
+    // Access is checked on the server; non-members see “not found”.
     onClose();
-    router.push("/workspace/demo");
+    router.push(`/workspace/${code}`);
   }
 
   return (
     <form onSubmit={submit} noValidate className="space-y-4">
-      <Field label="Invite link or code" htmlFor="join-code" error={error}>
+      <Field label="Workspace link or id" htmlFor="join-code" error={error}>
         <input
           id="join-code"
           data-autofocus
@@ -259,7 +280,7 @@ function JoinWorkspaceForm({ onClose }: { onClose: () => void }) {
             setValue(e.target.value);
             setError(null);
           }}
-          placeholder="/workspace/demo or demo"
+          placeholder="https://…/workspace/… or an id"
           autoComplete="off"
           spellCheck={false}
           className={cn(inputClasses, "font-mono", error && "border-danger/60")}
@@ -274,7 +295,7 @@ function JoinWorkspaceForm({ onClose }: { onClose: () => void }) {
         className="flex w-full items-center justify-between rounded-[9px] border border-dashed border-line-strong px-3 py-2.5 text-left text-[12.5px] text-fg-subtle transition-colors hover:border-accent/50 hover:bg-accent-soft/50 hover:text-fg-muted"
       >
         <span>
-          Try the demo code <span className="font-mono text-accent">demo</span>
+          Try the sample workspace <span className="font-mono text-accent">demo</span>
         </span>
         <Kbd>Fill</Kbd>
       </button>
@@ -302,7 +323,7 @@ const shortcutGroups: { title: string; items: { keys: string[]; label: string }[
       { keys: ["⌘", "J"], label: "Toggle bottom panel" },
       { keys: ["⌘", "⇧", "K"], label: "Toggle collaboration panel" },
       { keys: ["⌘", "↵"], label: "Run project" },
-      { keys: ["⌘", "S"], label: "Save file (this session)" },
+      { keys: ["⌘", "S"], label: "Save file" },
     ],
   },
 ];

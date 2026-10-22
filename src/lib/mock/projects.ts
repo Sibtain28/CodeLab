@@ -6,20 +6,9 @@
 import type { Person } from "./people";
 import { people } from "./people";
 
-export type Language =
-  | "TypeScript"
-  | "JavaScript"
-  | "Python"
-  | "Go"
-  | "Rust";
+import type { Language } from "../projects";
 
-export const languageMeta: Record<Language, { color: string; short: string }> = {
-  TypeScript: { color: "#2f6fb5", short: "TS" },
-  JavaScript: { color: "#a88300", short: "JS" },
-  Python: { color: "#356f9f", short: "PY" },
-  Go: { color: "#00788f", short: "GO" },
-  Rust: { color: "#b0480f", short: "RS" },
-};
+export { languageMeta, type Language } from "../projects";
 
 export interface Project {
   id: string;

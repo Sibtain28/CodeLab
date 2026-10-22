@@ -3,9 +3,9 @@
 import { Star } from "lucide-react";
 import Link from "next/link";
 import { AvatarStack } from "@/components/ui/avatar";
-import { Badge, LiveDot } from "@/components/ui/primitives";
+import { Badge } from "@/components/ui/primitives";
 import { cn } from "@/lib/cn";
-import { languageMeta, type Language, type Project } from "@/lib/mock/projects";
+import { languageMeta, type Language, type ProjectSummary as Project } from "@/lib/projects";
 
 export function LanguageGlyph({ language, size = "md" }: { language: Language; size?: "sm" | "md" }) {
   const meta = languageMeta[language];
@@ -36,7 +36,7 @@ function LanguageLabel({ project }: { project: Project }) {
       />
       <span className="truncate">
         {project.language}
-        <span className="text-fg-subtle"> · {project.framework}</span>
+        {project.framework && <span className="text-fg-subtle"> · {project.framework}</span>}
       </span>
     </span>
   );
@@ -45,18 +45,18 @@ function LanguageLabel({ project }: { project: Project }) {
 interface CardProps {
   project: Project;
   onToggleStar: (id: string) => void;
-  onOpenUnavailable: (project: Project) => void;
 }
 
 /** Stretched-link overlay: the whole item opens the project, while the star
  *  button stays independently clickable above it. */
-function OpenOverlay({ project, onOpenUnavailable }: Omit<CardProps, "onToggleStar">) {
-  const label = `Open ${project.name}`;
-  const cls = "absolute inset-0 z-0 rounded-[inherit] focus-visible:outline-offset-[-2px]";
-  if (project.hasWorkspace) {
-    return <Link href={`/workspace/${project.id}`} aria-label={label} className={cls} />;
-  }
-  return <button type="button" aria-label={label} onClick={() => onOpenUnavailable(project)} className={cls} />;
+function OpenOverlay({ project }: Pick<CardProps, "project">) {
+  return (
+    <Link
+      href={`/workspace/${project.id}`}
+      aria-label={`Open ${project.name}`}
+      className="absolute inset-0 z-0 rounded-[inherit] focus-visible:outline-offset-[-2px]"
+    />
+  );
 }
 
 function StarButton({ project, onToggleStar }: Pick<CardProps, "project" | "onToggleStar">) {
@@ -77,30 +77,25 @@ function StarButton({ project, onToggleStar }: Pick<CardProps, "project" | "onTo
 }
 
 function Meta({ project }: { project: Project }) {
-  return (
-    <>
-      {project.liveCount > 0 && (
-        <Badge tone="accent">
-          <LiveDot /> {project.liveCount} live
-        </Badge>
-      )}
-      {project.local && <Badge tone="warning">Not saved</Badge>}
-      {project.hasWorkspace && <Badge>Demo</Badge>}
-    </>
-  );
+  if (project.role === "Owner") return null;
+  return <Badge>{project.role}</Badge>;
+}
+
+function edited(project: Project) {
+  return project.lastEditedBy ? `Edited ${project.updatedLabel} · ${project.lastEditedBy}` : `Updated ${project.updatedLabel}`;
 }
 
 export function ProjectCard(props: CardProps) {
   const { project } = props;
   return (
     <article className="group relative flex flex-col rounded-xl bg-panel p-4 shadow-card transition-[box-shadow,transform] duration-200 ease-out hover:-translate-y-px hover:shadow-lift focus-within:shadow-lift">
-      <OpenOverlay {...props} />
+      <OpenOverlay project={project} />
       <div className="pointer-events-none relative flex items-start gap-3">
         <LanguageGlyph language={project.language} />
         <div className="min-w-0 flex-1">
           <h3 className="truncate font-mono text-[13.5px] font-medium text-fg">{project.name}</h3>
           <p className="mt-0.5 text-[12px] text-fg-subtle">
-            Edited {project.lastEdited} · {project.lastEditedBy}
+            {edited(project)}
           </p>
         </div>
         <div className="pointer-events-auto -mr-1 -mt-0.5">
@@ -116,7 +111,7 @@ export function ProjectCard(props: CardProps) {
         </span>
         <span className="flex shrink-0 items-center gap-2">
           <Meta project={project} />
-          {project.collaborators.length > 0 && <AvatarStack people={project.collaborators} size="xs" max={3} />}
+          {project.others.length > 0 && <AvatarStack people={project.others} size="xs" max={3} />}
         </span>
       </div>
     </article>
@@ -130,7 +125,7 @@ export function ProjectRow(props: CardProps) {
       role="row"
       className="group relative grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-4 py-3 transition-colors duration-150 hover:bg-canvas md:grid-cols-[minmax(0,2.2fr)_minmax(0,1.2fr)_minmax(0,0.9fr)_88px_auto]"
     >
-      <OpenOverlay {...props} />
+      <OpenOverlay project={project} />
       <div role="cell" className="pointer-events-none relative flex min-w-0 items-center gap-3">
         <LanguageGlyph language={project.language} size="sm" />
         <div className="min-w-0">
@@ -145,14 +140,14 @@ export function ProjectRow(props: CardProps) {
         <LanguageLabel project={project} />
       </div>
       <div role="cell" className="pointer-events-none relative hidden md:block">
-        {project.collaborators.length > 0 ? (
-          <AvatarStack people={project.collaborators} size="xs" max={3} />
+        {project.others.length > 0 ? (
+          <AvatarStack people={project.others} size="xs" max={3} />
         ) : (
           <span className="text-[12px] text-fg-subtle">Only you</span>
         )}
       </div>
       <div role="cell" className="pointer-events-none relative hidden text-right text-[12.5px] tabular-nums text-fg-subtle md:block">
-        {project.lastEdited}
+        {project.updatedLabel}
       </div>
       <div role="cell" className="relative flex justify-end">
         <StarButton {...props} />

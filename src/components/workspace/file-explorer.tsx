@@ -65,6 +65,7 @@ export function FileExplorer({
   onOpenFile,
   onCreateFile,
   peers,
+  readOnly = false,
 }: {
   workspaceName: string;
   paths: string[];
@@ -74,13 +75,17 @@ export function FileExplorer({
   onToggleFolder: (path: string) => void;
   onCollapseAll: () => void;
   onOpenFile: (path: string) => void;
-  onCreateFile: (path: string) => string | null;
+  /** Resolves to an error message, or null once the file exists. */
+  onCreateFile: (path: string) => string | null | Promise<string | null>;
   peers: WorkspacePeer[];
+  /** View-only members can't create files. */
+  readOnly?: boolean;
 }) {
   const tree = useMemo(() => buildTree(paths), [paths]);
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [pendingCreate, setPendingCreate] = useState(false);
 
   const peersByFile = useMemo(() => {
     const map = new Map<string, WorkspacePeer[]>();
@@ -91,14 +96,23 @@ export function FileExplorer({
     return map;
   }, [peers]);
 
-  function submit(e: FormEvent) {
+  async function submit(e: FormEvent) {
     e.preventDefault();
+    if (pendingCreate) return;
     const path = draft.trim();
     if (!VALID_PATH.test(path)) {
       setError("Use letters, numbers, dots, dashes and / for folders.");
       return;
     }
-    const err = onCreateFile(path);
+    setPendingCreate(true);
+    let err: string | null;
+    try {
+      err = await onCreateFile(path);
+    } catch {
+      err = "Couldn't reach the server. Try again.";
+    } finally {
+      setPendingCreate(false);
+    }
     if (err) {
       setError(err);
       return;
@@ -183,6 +197,7 @@ export function FileExplorer({
           <IconButton
             label="New file"
             size="sm"
+            disabled={readOnly}
             onClick={() => {
               setCreating(true);
               setError(null);
@@ -218,6 +233,8 @@ export function FileExplorer({
             }}
             placeholder="src/lib/new-file.ts"
             aria-label="New file path"
+            readOnly={pendingCreate}
+            aria-busy={pendingCreate}
             spellCheck={false}
             className={cn(
               "h-7 w-full rounded-[6px] border bg-panel px-2 font-mono text-[12px] text-fg outline-none placeholder:text-fg-faint focus:shadow-[0_0_0_3px_rgb(38_115_77/0.12)]",
