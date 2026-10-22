@@ -1,4 +1,4 @@
-import { Braces, FileCode2, FileText, Hash, Palette, Settings2 } from "lucide-react";
+import { Braces, CodeXml, FileCode2, FileText, Hash, Palette, Settings2 } from "lucide-react";
 import { cn } from "@/lib/cn";
 
 export function FileIcon({ path, className }: { path: string; className?: string }) {
@@ -13,8 +13,12 @@ export function FileIcon({ path, className }: { path: string; className?: string
     case "jsx":
       return <FileCode2 className={cn(cls, "text-[#2f74c0]")} />;
     case "ts":
-    case "js":
       return <FileCode2 className={cn(cls, "text-[#3a62b0]")} />;
+    case "js":
+    case "mjs":
+      return <FileCode2 className={cn(cls, "text-[#a88300]")} />;
+    case "html":
+      return <CodeXml className={cn(cls, "text-[#c0562a]")} />;
     case "css":
       return <Palette className={cn(cls, "text-[#8250c4]")} />;
     case "json":

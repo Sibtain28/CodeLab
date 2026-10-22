@@ -30,7 +30,7 @@ import {
   type OutputLine,
   type TerminalLine,
 } from "./bottom-panel";
-import { CodeEditor, type EditorPeerCursor } from "./code-editor";
+import { CodeEditor, type EditorCommand, type EditorPeerCursor } from "./code-editor";
 import { CollaborationPanel, type CallState } from "./collaboration-panel";
 import { EditorTabs } from "./editor-tabs";
 import { FileExplorer, allFolders } from "./file-explorer";
@@ -145,8 +145,12 @@ export function WorkspaceIDE({ workspace }: { workspace: WorkspaceMeta }) {
 
   const activeLanguage = active ? languageFromPath(active) : null;
   const peersHere = peers.filter((p) => p.file === active);
-  const editorPeers: EditorPeerCursor[] = peersHere.flatMap((p) =>
-    p.cursor ? [{ id: p.id, name: p.name.split(" ")[0], color: p.color, ...p.cursor }] : [],
+  const editorPeers = useMemo<EditorPeerCursor[]>(
+    () =>
+      peers
+        .filter((p) => p.file === active)
+        .flatMap((p) => (p.cursor ? [{ id: p.id, name: p.name.split(" ")[0], color: p.color, ...p.cursor }] : [])),
+    [active],
   );
 
   // ----- Actions -----------------------------------------------------------
@@ -410,27 +414,47 @@ export function WorkspaceIDE({ workspace }: { workspace: WorkspaceMeta }) {
 
   // ----- Keyboard shortcuts --------------------------------------------------
 
-  const onShortcut = useEffectEvent((e: KeyboardEvent) => {
-    const mod = e.metaKey || e.ctrlKey;
-    if (!mod) return;
-    const key = e.key.toLowerCase();
-    if (key === "b" && !e.shiftKey) {
-      e.preventDefault();
-      toggleExplorer();
-    } else if (key === "j" && !e.shiftKey) {
-      e.preventDefault();
-      setBottomOpen((v) => !v);
-    } else if (key === "k" && e.shiftKey) {
-      e.preventDefault();
-      toggleCollab();
-    } else if (key === "enter") {
-      e.preventDefault();
-      if (runState === "idle") run();
-      else stop();
-    } else if (key === "s") {
-      e.preventDefault();
-      saveActive();
+  /** Shared by the window shortcut handler and Monaco's own keybindings. */
+  function runEditorCommand(command: EditorCommand) {
+    switch (command) {
+      case "explorer":
+        toggleExplorer();
+        break;
+      case "panel":
+        setBottomOpen((v) => !v);
+        break;
+      case "collab":
+        toggleCollab();
+        break;
+      case "run":
+        if (runState === "idle") run();
+        else stop();
+        break;
+      case "save":
+        saveActive();
+        break;
     }
+  }
+
+  const onShortcut = useEffectEvent((e: KeyboardEvent) => {
+    if (!(e.metaKey || e.ctrlKey)) return;
+    const key = e.key.toLowerCase();
+    const command: EditorCommand | null =
+      key === "b" && !e.shiftKey
+        ? "explorer"
+        : key === "j" && !e.shiftKey
+          ? "panel"
+          : key === "k" && e.shiftKey
+            ? "collab"
+            : key === "enter"
+              ? "run"
+              : key === "s"
+                ? "save"
+                : null;
+    if (!command) return;
+    // Always stop the browser default (e.g. the "Save page" dialog for ⌘S).
+    e.preventDefault();
+    runEditorCommand(command);
   });
 
   useEffect(() => {
@@ -533,10 +557,10 @@ export function WorkspaceIDE({ workspace }: { workspace: WorkspaceMeta }) {
               </div>
               <div className="min-h-0 flex-1">
                 <CodeEditor
-                  key={active}
+                  path={active}
                   value={files[active]}
-                  language={languageFromPath(active)}
                   onChange={(v) => setFiles((f) => ({ ...f, [active]: v }))}
+                  onCommand={runEditorCommand}
                   onCursorChange={setCursor}
                   peers={editorPeers}
                   problems={problems.filter((p) => p.file === active)}

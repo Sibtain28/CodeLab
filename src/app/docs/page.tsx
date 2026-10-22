@@ -19,7 +19,7 @@ const shortcuts: { keys: string[]; label: string }[] = [
 ];
 
 const status: { area: string; now: string; next: string }[] = [
-  { area: "Editor", now: "Local editing with syntax highlighting", next: "Monaco editor" },
+  { area: "Editor", now: "Monaco editor; files live in the open tab", next: "Saved to PostgreSQL + Prisma" },
   { area: "Collaboration", now: "Sample cursors and presence", next: "Real-time sync with Yjs" },
   { area: "Calls", now: "Call controls, no camera or microphone access", next: "Audio and video with LiveKit" },
   { area: "Terminal & Run", now: "Simulated in the browser", next: "Sandboxed execution" },

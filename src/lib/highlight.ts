@@ -21,7 +21,7 @@ export interface Token {
   text: string;
 }
 
-export type LanguageId = "tsx" | "ts" | "css" | "json" | "markdown" | "plain";
+export type LanguageId = "tsx" | "ts" | "js" | "html" | "css" | "json" | "markdown" | "plain";
 
 export function languageFromPath(path: string): LanguageId {
   const ext = path.split(".").pop()?.toLowerCase();
@@ -30,9 +30,15 @@ export function languageFromPath(path: string): LanguageId {
     case "jsx":
       return "tsx";
     case "ts":
+    case "mts":
+      return "ts";
     case "js":
     case "mjs":
-      return "ts";
+    case "cjs":
+      return "js";
+    case "html":
+    case "htm":
+      return "html";
     case "css":
       return "css";
     case "json":
@@ -47,6 +53,8 @@ export function languageFromPath(path: string): LanguageId {
 export const languageLabel: Record<LanguageId, string> = {
   tsx: "TypeScript JSX",
   ts: "TypeScript",
+  js: "JavaScript",
+  html: "HTML",
   css: "CSS",
   json: "JSON",
   markdown: "Markdown",
@@ -216,7 +224,10 @@ function tokenizeCode(text: string, lang: LanguageId): Token[] {
     case "tsx":
       return run(text, tsRules(true));
     case "ts":
+    case "js":
       return run(text, tsRules(false));
+    case "html":
+      return run(text, tsRules(true));
     case "css":
       return run(text, cssRules);
     case "json":
@@ -247,3 +258,24 @@ export const tokenClass: Record<TokenType, string> = {
   punct: "text-syn-punct",
   plain: "text-syn-plain",
 };
+
+/** Monaco language id for a file path. */
+export function monacoLanguage(path: string): string {
+  switch (languageFromPath(path)) {
+    case "tsx":
+    case "ts":
+      return "typescript";
+    case "js":
+      return "javascript";
+    case "html":
+      return "html";
+    case "css":
+      return "css";
+    case "json":
+      return "json";
+    case "markdown":
+      return "markdown";
+    default:
+      return "plaintext";
+  }
+}

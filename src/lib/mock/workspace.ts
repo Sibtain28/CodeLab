@@ -244,6 +244,40 @@ body {
   color: #f87171;
 }
 `,
+  "public/offline.html": `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Orbit is offline</title>
+    <link rel="stylesheet" href="/offline.css" />
+  </head>
+  <body>
+    <main class="offline">
+      <h1>You're offline</h1>
+      <p>Metrics will refresh when your connection returns.</p>
+      <button type="button" onclick="location.reload()">Try again</button>
+    </main>
+  </body>
+</html>
+`,
+  "scripts/seed-metrics.js": `// Seeds the local API with sample metrics for development.
+const metrics = [
+  { id: "p95", label: "p95 latency", value: 182, delta: -0.04, unit: "ms" },
+  { id: "rps", label: "Throughput", value: 1240, delta: 0.12, unit: "req/s" },
+  { id: "err", label: "Error rate", value: 0.6, delta: 0, unit: "%" },
+];
+
+async function seed() {
+  const res = await fetch("http://localhost:4000/metrics", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(metrics),
+  });
+  console.log(res.ok ? "Seeded metrics" : \`Seed failed: \${res.status}\`);
+}
+
+seed();
+`,
   "package.json": `{
   "name": "orbit-dashboard",
   "version": "0.4.2",

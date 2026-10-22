@@ -418,3 +418,49 @@ dialog.cl-dialog[open]::backdrop {
     animation: none !important;
   }
 }
+
+/* ------------------------------------------------------------ Monaco */
+/* Monaco draws its own caret and focus states. */
+.monaco-editor textarea:focus-visible,
+.monaco-editor .inputarea:focus-visible {
+  outline: none;
+}
+
+/* Collaborator presence inside Monaco (sample positions). */
+.cl-peer-violet {
+  --peer: var(--color-peer-violet);
+}
+.cl-peer-sky {
+  --peer: var(--color-peer-sky);
+}
+.cl-peer-amber {
+  --peer: var(--color-peer-amber);
+}
+.cl-peer-rose {
+  --peer: var(--color-peer-rose);
+}
+.cl-peer-accent {
+  --peer: var(--color-accent);
+}
+.cl-peer-line {
+  background: color-mix(in srgb, var(--peer) 7%, transparent);
+}
+.cl-peer-caret {
+  position: relative;
+  width: 2px;
+  height: 22px;
+  border-radius: 1px;
+  background: var(--peer);
+  pointer-events: none;
+}
+.cl-peer-label {
+  position: absolute;
+  bottom: calc(100% - 1px);
+  left: 0;
+  padding: 0 5px;
+  border-radius: 4px 4px 4px 0;
+  background: var(--peer);
+  color: #fff;
+  font: 600 10px/15px var(--font-sans);
+  white-space: nowrap;
+}
