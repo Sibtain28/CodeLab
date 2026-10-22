@@ -1,26 +1,420 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+/*
+ * CodeLab design tokens — light, warm, editorial.
+ *
+ * Token names are semantic so components stay theme-agnostic:
+ *   canvas   app background (warm off-white)
+ *   panel    primary surface (white)
+ *   raised   quiet fills: inputs, chips, hovered rows
+ *   sunken   recessed areas: side panels, terminal
+ * One accent (forest green) is used for primary actions and active states.
+ * Presence colours are reserved for collaborators.
+ */
+@theme {
+  --color-canvas: #f8f8f5;
+  --color-panel: #ffffff;
+  --color-raised: #f3f3ef;
+  --color-sunken: #f5f5f1;
+  --color-overlay: #ffffff;
+  --color-hover: #efefea;
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+  --color-line: #e8e8e2;
+  --color-line-strong: #d9d9d2;
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  --color-fg: #20211f;
+  --color-fg-muted: #4b4d48;
+  --color-fg-subtle: #6b6d67;
+  --color-fg-faint: #8a8c84;
+
+  --color-accent: #26734d;
+  --color-accent-strong: #1d5c3d;
+  --color-accent-ink: #ffffff;
+  --color-accent-soft: #edf5f0;
+  --color-accent-line: #cfe2d6;
+
+  --color-info: #2c67a8;
+  --color-success: #2b8150;
+  --color-warning: #a2620b;
+  --color-danger: #c03d37;
+
+  /* Presence palette — deep enough for text on white */
+  --color-peer-violet: #6b52c8;
+  --color-peer-sky: #1d76ad;
+  --color-peer-amber: #a86400;
+  --color-peer-rose: #c03f66;
+
+  /* Light syntax theme */
+  --color-syn-keyword: #7b3fa0;
+  --color-syn-string: #0e6b66;
+  --color-syn-number: #b0501a;
+  --color-syn-comment: #8a8c84;
+  --color-syn-function: #2b5ea7;
+  --color-syn-type: #8f5c00;
+  --color-syn-tag: #b03656;
+  --color-syn-property: #3f5a70;
+  --color-syn-punct: #6d6f69;
+  --color-syn-plain: #20211f;
+
+  --font-sans: var(--font-geist), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-display: var(--font-instrument), "Iowan Old Style", Georgia, serif;
+
+  --shadow-hairline: 0 0 0 1px rgb(32 33 31 / 0.06);
+  --shadow-card: 0 1px 2px rgb(32 33 31 / 0.04), 0 0 0 1px rgb(32 33 31 / 0.05);
+  --shadow-lift: 0 1px 2px rgb(32 33 31 / 0.04), 0 8px 24px -10px rgb(32 33 31 / 0.16),
+    0 0 0 1px rgb(32 33 31 / 0.06);
+  --shadow-pop: 0 2px 6px rgb(32 33 31 / 0.05), 0 18px 40px -14px rgb(32 33 31 / 0.22),
+    0 0 0 1px rgb(32 33 31 / 0.07);
+  --shadow-scene: 0 1px 1px rgb(32 33 31 / 0.04), 0 10px 24px -10px rgb(32 33 31 / 0.14),
+    0 40px 90px -30px rgb(32 33 31 / 0.28);
+
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+
+  --animate-blink: blink 1.1s steps(1) infinite;
+  --animate-rise: rise 0.7s var(--ease-out-expo) both;
+  --animate-fade-in: fade-in 0.5s ease-out both;
+  --animate-pop-in: pop-in 0.18s var(--ease-out-expo) both;
+  --animate-toast-in: toast-in 0.32s var(--ease-out-expo) both;
+  --animate-slide-in-left: slide-in-left 0.28s var(--ease-out-expo) both;
+  --animate-check: check 0.36s var(--ease-out-expo) both;
+
+  @keyframes blink {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0;
+    }
+  }
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(14px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes pop-in {
+    from {
+      opacity: 0;
+      transform: translateY(-4px) scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes toast-in {
+    from {
+      opacity: 0;
+      transform: translateY(10px) scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes slide-in-left {
+    from {
+      opacity: 0;
+      transform: translateX(-12px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes check {
+    from {
+      transform: scale(0.6);
+      opacity: 0;
+    }
+    to {
+      transform: none;
+      opacity: 1;
+    }
   }
 }
 
+:root {
+  color-scheme: light;
+}
+
+html {
+  background: var(--color-canvas);
+}
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-canvas);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  font-feature-settings: "ss01", "cv11";
+  text-rendering: optimizeLegibility;
+  -webkit-tap-highlight-color: transparent;
+}
+
+::selection {
+  background: rgb(38 115 77 / 0.16);
+}
+
+:focus-visible {
+  outline: 2px solid rgb(38 115 77 / 0.55);
+  outline-offset: 2px;
+}
+
+/* Quiet scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #d6d6cf transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #d6d6cf;
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ---------------------------------------------------------------- dialogs */
+/* Native <dialog> with enter and exit transitions (progressive: browsers
+   without @starting-style simply show/hide instantly). */
+dialog.cl-dialog {
+  opacity: 0;
+  transform: translateY(10px) scale(0.985);
+  transition:
+    opacity 0.2s ease-out,
+    transform 0.24s var(--ease-out-expo),
+    overlay 0.24s allow-discrete,
+    display 0.24s allow-discrete;
+}
+dialog.cl-dialog[open] {
+  opacity: 1;
+  transform: none;
+}
+@starting-style {
+  dialog.cl-dialog[open] {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+}
+dialog.cl-dialog::backdrop {
+  background: rgb(32 33 31 / 0);
+  backdrop-filter: blur(0);
+  transition:
+    background 0.24s ease-out,
+    backdrop-filter 0.24s ease-out,
+    overlay 0.24s allow-discrete,
+    display 0.24s allow-discrete;
+}
+dialog.cl-dialog[open]::backdrop {
+  background: rgb(32 33 31 / 0.28);
+  backdrop-filter: blur(2px);
+}
+@starting-style {
+  dialog.cl-dialog[open]::backdrop {
+    background: rgb(32 33 31 / 0);
+    backdrop-filter: blur(0);
+  }
+}
+
+/* ------------------------------------------------------------ marketing */
+/* Scroll-linked section reveals. Pure CSS: no scroll listeners, no hijacking.
+   Browsers without scroll-driven animations render content immediately. */
+@supports (animation-timeline: view()) {
+  .reveal {
+    animation: reveal linear both;
+    animation-timeline: view();
+    animation-range: entry 0% entry 40%;
+  }
+  .nav-scrolled {
+    animation: nav-border linear both;
+    animation-timeline: scroll(root);
+    animation-range: 0 120px;
+  }
+}
+@keyframes reveal {
+  from {
+    opacity: 0;
+    transform: translateY(28px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes nav-border {
+  from {
+    border-color: transparent;
+    background-color: rgb(248 248 245 / 0);
+  }
+  to {
+    border-color: var(--color-line);
+    background-color: rgb(248 248 245 / 0.82);
+  }
+}
+
+/* Staggered hero entrance */
+.stagger > * {
+  animation: rise 0.9s var(--ease-out-expo) both;
+}
+.stagger > *:nth-child(2) {
+  animation-delay: 0.08s;
+}
+.stagger > *:nth-child(3) {
+  animation-delay: 0.16s;
+}
+.stagger > *:nth-child(4) {
+  animation-delay: 0.24s;
+}
+.stagger > *:nth-child(5) {
+  animation-delay: 0.32s;
+}
+
+/* -------------------------------------------------------------- 3D scene */
+.scene {
+  perspective: 2400px;
+  perspective-origin: 50% 20%;
+}
+/* The stage's resting tilt. Pointer parallax overwrites `transform` inline
+   on this one element (no inherited custom properties, so no subtree style
+   recalculation per frame). */
+.scene-stage {
+  transform-style: preserve-3d;
+  transform: rotateX(16deg) rotateY(-11deg) rotateZ(1.5deg);
+  animation: scene-enter 1.4s var(--ease-out-expo) 0.2s both;
+}
+/* Each layer unfolds from the editor plane to its own depth — a pure
+   transform animation the compositor can run on its own. */
+.scene-layer {
+  transform-style: preserve-3d;
+  transform: translateZ(var(--z, 0px));
+  animation: layer-unfold 1.6s var(--ease-out-expo) 0.2s both;
+}
+@keyframes scene-enter {
+  from {
+    opacity: 0;
+    translate: 0 60px;
+  }
+  45% {
+    opacity: 1;
+  }
+}
+@keyframes layer-unfold {
+  from {
+    transform: translateZ(0);
+  }
+}
+/* Pause the scene's ambient loops while it is off screen. */
+.scene[data-paused] *,
+.scene[data-paused] *::after {
+  animation-play-state: paused !important;
+}
+@media (max-width: 767px) {
+  .scene-stage {
+    transform: rotateX(12deg) rotateY(-7deg) rotateZ(1deg);
+  }
+}
+
+/* Active-speaker ring. Animates opacity on a pseudo-element instead of
+   box-shadow, so the pulse never triggers repaints. */
+.speak-ring {
+  position: relative;
+}
+.speak-ring::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow:
+    inset 0 0 0 2px var(--color-accent),
+    0 0 0 3px rgb(38 115 77 / 0.16);
+  animation: speak-pulse 1.8s ease-in-out infinite;
+}
+@keyframes speak-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/* Teammate typing a fix, then pausing. Slow and quiet by design. */
+.typing {
+  display: inline-block;
+  overflow: hidden;
+  vertical-align: bottom;
+  white-space: pre;
+  animation: typing 11s steps(1) infinite;
+}
+@keyframes typing {
+  0%,
+  18% {
+    width: 0ch;
+    animation-timing-function: steps(10, end);
+  }
+  38%,
+  92% {
+    width: 10ch;
+  }
+  94%,
+  100% {
+    width: 0ch;
+  }
+}
+
+/* A collaborator's pointer drifting between points of interest, with holds */
+.cursor-path {
+  animation: cursor-path 16s cubic-bezier(0.45, 0, 0.2, 1) infinite;
+}
+@keyframes cursor-path {
+  0%,
+  12% {
+    transform: translate(0, 0);
+  }
+  30%,
+  44% {
+    transform: translate(150px, 64px);
+  }
+  62%,
+  76% {
+    transform: translate(-40px, 128px);
+  }
+  94%,
+  100% {
+    transform: translate(0, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    animation-delay: 0s !important;
+    transition-duration: 0.001ms !important;
+  }
+  .typing {
+    width: 10ch;
+  }
+  .reveal {
+    animation: none !important;
+  }
 }
