@@ -7,6 +7,7 @@ import { WorkspaceIDE } from "@/components/workspace/workspace-ide";
 import { WorkspaceSkeleton } from "@/components/workspace/workspace-skeleton";
 import { demoMe, demoWorkspace, initialFiles, initialOpenTabs, peers } from "@/lib/mock/workspace";
 import { missingConfig } from "@/server/config";
+import { checkLocalCollabServer } from "@/server/collab-health";
 import { AccessError, requireUser } from "@/server/dal";
 import { loadWorkspace, type WorkspaceData } from "@/server/projects";
 
@@ -34,6 +35,9 @@ async function ProjectWorkspace({ params }: { params: Promise<{ workspaceId: str
     if (error instanceof AccessError) notFound();
     throw error;
   }
+
+  const collabUrl = process.env.COLLAB_URL?.trim() || null;
+  const collabProblem = collabUrl ? await checkLocalCollabServer(collabUrl) : null;
 
   const files = Object.fromEntries(data.files.map((f) => [f.path, f.content]));
   const versions = Object.fromEntries(data.files.map((f) => [f.path, f.version]));
@@ -64,7 +68,16 @@ async function ProjectWorkspace({ params }: { params: Promise<{ workspaceId: str
         cameraOn: false,
         status: "offline",
       }))}
-      persistence={{ projectId: data.id, canWrite: data.canWrite, versions }}
+      persistence={{
+        projectId: data.id,
+        canWrite: data.canWrite,
+        versions,
+        fileIds: Object.fromEntries(data.files.map((f) => [f.path, f.id])),
+        userId: user.id,
+        // Read at request time, so one build works in every environment.
+        collabUrl,
+        collabProblem,
+      }}
     />
   );
 }

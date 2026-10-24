@@ -92,6 +92,7 @@ export async function listProjects(user: CurrentUser): Promise<ProjectSummary[]>
 }
 
 export interface WorkspaceFile {
+  id: string;
   path: string;
   content: string;
   version: number;
@@ -120,7 +121,7 @@ export async function loadWorkspace(projectId: unknown): Promise<WorkspaceData> 
       description: true,
       language: true,
       framework: true,
-      files: { orderBy: { path: "asc" }, select: { path: true, content: true, version: true } },
+      files: { orderBy: { path: "asc" }, select: { id: true, path: true, content: true, version: true } },
       members: {
         orderBy: { createdAt: "asc" },
         select: { role: true, user: { select: { id: true, name: true } } },

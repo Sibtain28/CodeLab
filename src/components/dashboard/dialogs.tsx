@@ -221,11 +221,20 @@ function CreateProjectForm({
   );
 }
 
-/** Pulls a workspace id out of a pasted workspace link or raw id. */
-function parseWorkspaceCode(value: string): string {
+/**
+ * Turns what was pasted into a destination:
+ * - an invite link (…/join/<token>) or bare invite token → the join page;
+ * - a workspace link (…/workspace/<id>) or bare id → that workspace
+ *   (works for projects you're already a member of, and the demo).
+ * Access is always decided on the server.
+ */
+function parseJoinInput(value: string): string | null {
   const trimmed = value.trim();
-  const match = /workspace\/([\w-]+)/.exec(trimmed);
-  return match ? match[1] : trimmed;
+  const invite = /(?:^|\/join\/)([A-Za-z0-9_-]{43})(?:[/?#].*)?$/.exec(trimmed);
+  if (invite) return `/join/${invite[1]}`;
+  const workspace = /(?:^|\/workspace\/)([A-Za-z0-9_-]{1,64})(?:[/?#].*)?$/.exec(trimmed);
+  if (workspace) return `/workspace/${workspace[1]}`;
+  return null;
 }
 
 export function JoinWorkspaceDialog({
@@ -240,7 +249,7 @@ export function JoinWorkspaceDialog({
       open={open}
       onClose={onClose}
       title="Join a workspace"
-      description="Paste a workspace link or id. You can open workspaces you’re a member of."
+      description="Paste an invite link from the project owner, or a link to a workspace you’re already in."
       width="md"
     >
       <JoinWorkspaceForm onClose={onClose} />
@@ -255,23 +264,27 @@ function JoinWorkspaceForm({ onClose }: { onClose: () => void }) {
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    const code = parseWorkspaceCode(value);
-    if (!code) {
-      setError("Enter a workspace link or id.");
+    if (!value.trim()) {
+      setError("Paste an invite link.");
       return;
     }
-    if (!/^[A-Za-z0-9_-]{1,64}$/.test(code)) {
-      setError("That doesn’t look like a workspace link or id.");
+    const destination = parseJoinInput(value);
+    if (!destination) {
+      setError("That doesn’t look like an invite or workspace link.");
       return;
     }
-    // Access is checked on the server; non-members see “not found”.
     onClose();
-    router.push(`/workspace/${code}`);
+    router.push(destination);
   }
 
   return (
     <form onSubmit={submit} noValidate className="space-y-4">
-      <Field label="Workspace link or id" htmlFor="join-code" error={error}>
+      <Field
+        label="Invite link"
+        htmlFor="join-code"
+        error={error}
+        hint="Ask the project owner to create one from Invite in their workspace."
+      >
         <input
           id="join-code"
           data-autofocus
@@ -280,7 +293,7 @@ function JoinWorkspaceForm({ onClose }: { onClose: () => void }) {
             setValue(e.target.value);
             setError(null);
           }}
-          placeholder="https://…/workspace/… or an id"
+          placeholder="https://…/join/…"
           autoComplete="off"
           spellCheck={false}
           className={cn(inputClasses, "font-mono", error && "border-danger/60")}

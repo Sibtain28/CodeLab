@@ -1,11 +1,12 @@
 "use client";
 
-import { CircleX, Cloud, GitBranch, Radio, TriangleAlert, Video } from "lucide-react";
+import { CircleX, Cloud, CloudOff, GitBranch, LoaderCircle, Radio, TriangleAlert, Users, Video } from "lucide-react";
 import { cn } from "@/lib/cn";
 import type { RunState } from "./toolbar";
 
 export function StatusBar({
   persisted = false,
+  live = null,
   branch,
   errors,
   warnings,
@@ -18,6 +19,8 @@ export function StatusBar({
   dirtyCount,
 }: {
   persisted?: boolean;
+  /** Live collaboration state, when enabled. */
+  live?: { status: "connecting" | "connected" | "offline" | "denied"; others: number; detail?: string } | null;
   branch: string;
   errors: number;
   warnings: number;
@@ -70,7 +73,25 @@ export function StatusBar({
         <span className="hidden md:inline">Spaces: 2</span>
         <span className="hidden md:inline">UTF-8</span>
         {language && <span className="hidden sm:inline">{language}</span>}
-        {persisted ? (
+        {live ? (
+          live.status === "connected" ? (
+            <span className="flex items-center gap-1 text-accent" title="Live editing is on. ⌘S saves the shared file for everyone." role="status">
+              <Users className="h-3 w-3" /> Live{live.others > 0 ? ` · ${live.others} other${live.others === 1 ? "" : "s"}` : ""}
+            </span>
+          ) : live.status === "connecting" ? (
+            <span className="flex items-center gap-1" role="status">
+              <LoaderCircle className="h-3 w-3 animate-spin" /> Connecting…
+            </span>
+          ) : live.status === "offline" ? (
+            <span className="flex items-center gap-1 text-warning" title="Your edits are kept and sync when the connection returns." role="status">
+              <CloudOff className="h-3 w-3" /> Offline — reconnecting
+            </span>
+          ) : (
+            <span className="flex items-center gap-1 text-warning" title={live.detail ?? "The live session refused this connection."} role="status">
+              <TriangleAlert className="h-3 w-3" /> Live editing off
+            </span>
+          )
+        ) : persisted ? (
           <span className="hidden items-center gap-1 lg:flex" title="⌘S saves to your account. Real-time sync arrives with Yjs.">
             <Cloud className="h-3 w-3" /> Saved with ⌘S
           </span>

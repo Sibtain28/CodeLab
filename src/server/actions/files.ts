@@ -13,7 +13,7 @@ export type SaveFileResult =
   | { ok: false; reason: "error"; error: string };
 
 export type CreateFileResult =
-  | { ok: true; version: number }
+  | { ok: true; id: string; version: number }
   | { ok: false; error: string };
 
 const path = z.string().refine(isValidFilePath, "Invalid file path.");
@@ -94,10 +94,10 @@ export async function createFile(input: unknown): Promise<CreateFileResult> {
     if (count >= MAX_FILES_PER_PROJECT) return { ok: false, error: `Projects can hold up to ${MAX_FILES_PER_PROJECT} files.` };
     const file = await db.projectFile.create({
       data: { projectId, path: parsed.data.path, content: "", updatedById: user.id },
-      select: { version: true },
+      select: { id: true, version: true },
     });
     await db.project.update({ where: { id: projectId }, data: { updatedAt: new Date() } });
-    return { ok: true, version: file.version };
+    return { ok: true, id: file.id, version: file.version };
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
       return { ok: false, error: "A file with that name already exists." };

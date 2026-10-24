@@ -39,7 +39,7 @@ const signInSchema = z.object({
 /** Only allow redirects back into the app's own private pages. */
 function safeNext(value: FormDataEntryValue | null) {
   if (typeof value !== "string") return "/dashboard";
-  if (!/^\/(dashboard|workspace\/[A-Za-z0-9_-]+)$/.test(value)) return "/dashboard";
+  if (!/^\/(dashboard|workspace\/[A-Za-z0-9_-]+|join\/[A-Za-z0-9_-]{43})$/.test(value)) return "/dashboard";
   return value;
 }
 

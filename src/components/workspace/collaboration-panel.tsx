@@ -105,6 +105,7 @@ function CallButton({
 
 export function CollaborationPanel({
   me,
+  livePresence = false,
   peers,
   call,
   onCallChange,
@@ -113,6 +114,8 @@ export function CollaborationPanel({
   onClose,
 }: {
   me: WorkspaceMe;
+  /** Participants and their files are real (live collaboration); the call is still simulated. */
+  livePresence?: boolean;
   peers: WorkspacePeer[];
   call: CallState;
   onCallChange: (next: Partial<CallState>) => void;
@@ -156,7 +159,7 @@ export function CollaborationPanel({
           Collaboration
         </span>
         <div className="flex items-center gap-1.5">
-          <MockBadge />
+          <MockBadge>{livePresence ? "Call: mock" : "Mock"}</MockBadge>
           {onClose && (
             <IconButton label="Close panel" size="sm" onClick={onClose}>
               <X className="h-4 w-4" />

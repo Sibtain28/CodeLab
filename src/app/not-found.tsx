@@ -15,8 +15,8 @@ export default function NotFound() {
             Nothing to compile here.
           </h1>
           <p className="mt-5 max-w-md text-[16px] leading-7 text-fg-muted">
-            This page or workspace doesn&apos;t exist, or you don&apos;t have access to it. Ask the
-            project owner to add you.
+            This page or workspace doesn&apos;t exist, or you don&apos;t have access to it. To join
+            someone&apos;s project, ask the owner for an invite link.
           </p>
           <div className="mt-9 flex flex-col gap-3 sm:flex-row">
             <ButtonLink href="/dashboard" variant="primary">

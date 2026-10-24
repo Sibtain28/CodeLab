@@ -7,7 +7,7 @@ import { AuthForm } from "./auth-form";
 import { SetupRequired } from "./setup-required";
 
 function safeNext(value: string | string[] | undefined) {
-  return typeof value === "string" && /^\/(dashboard|workspace\/[A-Za-z0-9_-]+)$/.test(value) ? value : undefined;
+  return typeof value === "string" && /^\/(dashboard|workspace\/[A-Za-z0-9_-]+|join\/[A-Za-z0-9_-]{43})$/.test(value) ? value : undefined;
 }
 
 /** Request-time part of the login/sign-up pages. */

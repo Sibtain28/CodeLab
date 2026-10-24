@@ -15,6 +15,9 @@
  */
 import { useEffect, useLayoutEffect, useRef } from "react";
 import type { editor as MonacoEditorNS } from "monaco-editor";
+import type { Awareness } from "y-protocols/awareness";
+import type * as Y from "yjs";
+import { MonacoYBinding } from "@/lib/collab/monaco-binding";
 import { monaco, THEME } from "@/lib/monaco/setup";
 import { monacoLanguage } from "@/lib/highlight";
 import type { PeerColor } from "@/lib/mock/people";
@@ -42,6 +45,12 @@ export interface MonacoCodeEditorProps {
   reveal?: { line: number; nonce: number } | null;
   /** View-only access: the buffer can be read and selected but not edited. */
   readOnly?: boolean;
+  /**
+   * Live collaboration for the current file. When set, the model is bound to
+   * this shared text (see MonacoYBinding) and the shared text is the source
+   * of truth; `value` is only used until the binding takes over.
+   */
+  collab?: { text: Y.Text; awareness: Awareness | null } | null;
 }
 
 /** Model URIs need a scheme; the file extension drives TSX parsing. */
@@ -100,6 +109,7 @@ export default function MonacoCodeEditor({
   problems,
   reveal,
   readOnly = false,
+  collab = null,
 }: MonacoCodeEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<MonacoEditorNS.IStandaloneCodeEditor | null>(null);
@@ -107,6 +117,8 @@ export default function MonacoCodeEditor({
   const currentPath = useRef<string | null>(null);
   /** True while we push external content into a model (not user typing). */
   const applyingExternal = useRef(false);
+  /** Active Yjs binding for the current model, if collaborating. */
+  const binding = useRef<MonacoYBinding | null>(null);
 
   // Latest props for Monaco callbacks, without re-creating the editor.
   const latest = useRef({ onChange, onCursorChange, onCommand, path, value });
@@ -144,6 +156,13 @@ export default function MonacoCodeEditor({
     bind(KeyMod.CtrlCmd | KeyCode.KeyB, "explorer");
     bind(KeyMod.CtrlCmd | KeyCode.KeyJ, "panel");
     bind(KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KeyK, "collab");
+    // While collaborating, undo/redo only your own edits (Yjs UndoManager);
+    // Monaco's stack would also revert collaborators' changes.
+    const undo = () => (binding.current ? binding.current.undoManager.undo() : editor.trigger("keyboard", "undo", null));
+    const redo = () => (binding.current ? binding.current.undoManager.redo() : editor.trigger("keyboard", "redo", null));
+    editor.addCommand(KeyMod.CtrlCmd | KeyCode.KeyZ, undo);
+    editor.addCommand(KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KeyZ, redo);
+    editor.addCommand(KeyMod.CtrlCmd | KeyCode.KeyY, redo);
 
     const subs = [
       editor.onDidChangeModelContent(() => {
@@ -179,12 +198,27 @@ export default function MonacoCodeEditor({
     currentPath.current = path;
   }, [path]);
 
+  // Bind the current model to the shared document (after the model switch
+  // above). Recreated when the file, the session or the editor changes.
+  useLayoutEffect(() => {
+    const editor = editorRef.current;
+    const model = editor?.getModel();
+    if (!editor || !model || !collab) return;
+    const b = new MonacoYBinding(collab.text, model, editor, collab.awareness);
+    binding.current = b;
+    return () => {
+      b.destroy();
+      if (binding.current === b) binding.current = null;
+    };
+  }, [path, collab]);
+
   // Content sync. The editor is uncontrolled while typing: React state follows
   // Monaco's change events. Only *external* changes (e.g. an applied fix) are
   // pushed into the model. As a layout effect this runs in the same task as
   // the render, so a keystroke can't land between the state update and this
   // comparison — typing is never overwritten by a stale value.
   useLayoutEffect(() => {
+    if (binding.current) return; // the shared document drives the model
     const model = monaco.editor.getModel(uriFor(path));
     if (!model || model.getValue() === value) return;
     applyingExternal.current = true;

@@ -33,6 +33,8 @@ interface ToastInput {
   description?: string;
   tone?: Tone;
   action?: ToastAction;
+  /** ms before it hides (default 4200). */
+  duration?: number;
 }
 
 const ToastContext = createContext<((t: ToastInput) => void) | null>(null);
@@ -61,10 +63,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const push = useCallback(
-    ({ tone = "success", ...rest }: ToastInput) => {
+    ({ tone = "success", duration = 4200, ...rest }: ToastInput) => {
       const id = nextId.current++;
       setToasts((all) => [...all.slice(-2), { id, tone, ...rest }]);
-      window.setTimeout(() => dismiss(id), 4200);
+      window.setTimeout(() => dismiss(id), duration);
     },
     [dismiss],
   );

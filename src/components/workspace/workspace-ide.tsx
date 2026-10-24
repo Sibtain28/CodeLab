@@ -15,7 +15,10 @@ import { Kbd } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
 import { cn } from "@/lib/cn";
 import { languageFromPath, languageLabel } from "@/lib/highlight";
+import { remoteCursors } from "@/lib/collab/cursors";
+import { hashText } from "@/lib/collab/hash";
 import type { Problem, WorkspaceMe, WorkspaceMeta, WorkspacePeer } from "@/lib/mock/workspace";
+import { colorFor } from "@/lib/projects";
 import {
   createFile as createFileAction,
   readFile as readFileAction,
@@ -37,6 +40,8 @@ import { InviteDialog, type PendingInvite } from "./invite-dialog";
 import { ResizeHandle } from "./resize-handle";
 import { StatusBar } from "./status-bar";
 import { Toolbar, type RunState, type Visibility } from "./toolbar";
+import { ProjectInviteDialog } from "./project-invite-dialog";
+import { useCollaboration } from "./use-collaboration";
 
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
 
@@ -102,6 +107,14 @@ export interface WorkspacePersistence {
   canWrite: boolean;
   /** Saved version of each file, used to detect conflicting saves. */
   versions: Record<string, number>;
+  /** Database id of each file (collaboration rooms are keyed by it). */
+  fileIds: Record<string, string>;
+  /** The signed-in user's id (for presence colours; never trusted by the server). */
+  userId: string;
+  /** WebSocket URL of the collab server, or null when live editing is off. */
+  collabUrl: string | null;
+  /** Set when the app server already knows live editing can't work (local dev). */
+  collabProblem?: string | null;
 }
 
 export function WorkspaceIDE({
@@ -127,10 +140,16 @@ export function WorkspaceIDE({
   // collaboration panel starts closed there until the user opens it.
   const isWide = useMediaQuery("(min-width: 1280px)");
 
-  // Files. `saved` is the last content known to be stored (in the database for
-  // real projects, in memory for the demo); a file is dirty when they differ.
+  // Files. `savedHash` fingerprints the last content known to be stored (in
+  // the database for real projects, in memory for the demo); a file is dirty
+  // when its current text hashes differently. With live collaboration the
+  // saved fingerprint is shared through the document, so every collaborator's
+  // unsaved indicator clears when anyone saves.
   const [files, setFiles] = useState<Record<string, string>>(initialFiles);
-  const [saved, setSaved] = useState<Record<string, string>>(initialFiles);
+  const [savedHash, setSavedHash] = useState<Record<string, string>>(() =>
+    Object.fromEntries(Object.entries(initialFiles).map(([p, c]) => [p, hashText(c)])),
+  );
+  const [fileIds, setFileIds] = useState<Record<string, string>>(persistence?.fileIds ?? {});
   const [versions, setVersions] = useState<Record<string, number>>(persistence?.versions ?? {});
   const [saving, setSaving] = useState<Set<string>>(() => new Set());
   const savingRef = useRef(new Set<string>());
@@ -172,7 +191,80 @@ export function WorkspaceIDE({
   }, []);
 
   const paths = useMemo(() => Object.keys(files), [files]);
-  const dirty = useMemo(() => new Set(paths.filter((p) => files[p] !== saved[p])), [paths, files, saved]);
+  const dirty = useMemo(
+    () => new Set(paths.filter((p) => hashText(files[p]) !== savedHash[p])),
+    [paths, files, savedHash],
+  );
+
+  // ----- Live collaboration (real projects with a collab server) -----------
+  const collabMe = useMemo(
+    () => ({ id: persistence?.userId ?? "demo", name: me.name, color: colorFor(persistence?.userId ?? "demo") }),
+    [persistence?.userId, me.name],
+  );
+  const openFiles = useMemo(
+    () => tabs.flatMap((path) => (fileIds[path] ? [{ path, fileId: fileIds[path] }] : [])),
+    [tabs, fileIds],
+  );
+  const collab = useCollaboration({
+    url: persistence?.collabUrl ?? null,
+    knownProblem: persistence?.collabProblem ?? null,
+    projectId: persistence?.projectId ?? "",
+    me: collabMe,
+    openFiles,
+    activePath: active,
+    onText: (path, text) => setFiles((f) => (f[path] === text ? f : { ...f, [path]: text })),
+    onSaved: (path, marker) => {
+      setSavedHash((h) => (h[path] === marker.hash ? h : { ...h, [path]: marker.hash }));
+      setVersions((v) => (v[path] === marker.version ? v : { ...v, [path]: marker.version }));
+      setConflicts((c) => (c[path] ? without(c, path) : c));
+    },
+  });
+  // Live editing is on unless it was given up for this visit (server not
+  // reachable or refused). A single file can also fall back if its document
+  // never loads. Fallback = Phase 3 editing: local edits + version-checked saves.
+  const live = collab.enabled && !collab.failure;
+  const liveSessionFor = (path: string | null) => {
+    if (!live || !path) return null;
+    const session = collab.session(path);
+    return session?.failed ? null : session;
+  };
+  const isLivePath = (path: string | null) => live && !!path && !collab.session(path)?.failed;
+  const activeSession = liveSessionFor(active);
+  const liveReady = !isLivePath(active) || !!activeSession?.synced;
+  const liveOffReason = !collab.enabled
+    ? null
+    : collab.failure
+      ? `Live editing is off: ${collab.failure}`
+      : active && collab.session(active)?.failed
+        ? "Live editing is off for this file: the live server didn't load it in time."
+        : null;
+
+  // Tell the user once when live editing falls back.
+  const announcedFailure = useRef(false);
+  useEffect(() => {
+    if (!collab.failure || announcedFailure.current) return;
+    announcedFailure.current = true;
+    toast({
+      tone: "warning",
+      title: "Live editing unavailable",
+      duration: 15000,
+      description: `${collab.failure.charAt(0).toUpperCase()}${collab.failure.slice(1)} You can keep editing — ⌘S saves normally. Reload to try again.`,
+    });
+  }, [collab.failure, toast]);
+
+  // Remote cursors in the active file, recomputed on awareness and text changes.
+  const [cursorTick, bumpCursors] = useState(0);
+  useEffect(() => {
+    const awareness = activeSession?.provider.awareness;
+    if (!activeSession || !awareness) return;
+    const bump = () => bumpCursors((n) => n + 1);
+    awareness.on("change", bump);
+    activeSession.text.observe(bump);
+    return () => {
+      awareness.off("change", bump);
+      activeSession.text.unobserve(bump);
+    };
+  }, [activeSession, activeSession?.synced]);
   // Sample diagnostics only exist for the demo's seeded file.
   const problems = useMemo(() => (isDemo ? computeProblems(files) : []), [isDemo, files]);
   const errors = problems.filter((p) => p.severity === "error").length;
@@ -182,13 +274,37 @@ export function WorkspaceIDE({
   const collabVisible = isDesktop ? collabOpen : mobileCollab;
 
   const activeLanguage = active ? languageFromPath(active) : null;
-  const peersHere = peers.filter((p) => p.file === active);
-  const editorPeers = useMemo<EditorPeerCursor[]>(
-    () =>
-      peers
-        .filter((p) => p.file === active)
-        .flatMap((p) => (p.cursor ? [{ id: p.id, name: p.name.split(" ")[0], color: p.color, ...p.cursor }] : [])),
-    [active, peers],
+  const editorPeers = useMemo<EditorPeerCursor[]>(() => {
+    if (live) {
+      const awareness = activeSession?.provider.awareness;
+      return activeSession?.synced && awareness ? remoteCursors(awareness, activeSession.text) : [];
+    }
+    return peers
+      .filter((p) => p.file === active)
+      .flatMap((p) => (p.cursor ? [{ id: p.id, name: p.name.split(" ")[0], color: p.color, ...p.cursor }] : []));
+    // cursorTick re-runs this when collaborators move or type.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, peers, live, activeSession, activeSession?.synced, cursorTick]);
+
+  // Members with live presence: online ones show the file they have open.
+  const livePeers = useMemo<WorkspacePeer[]>(() => {
+    if (!live) return peers;
+    const online = new Map<string, string | null>();
+    for (const p of collab.peers) {
+      if (p.user.id === collabMe.id) continue; // my other tabs
+      if (!online.has(p.user.id) || p.file) online.set(p.user.id, p.file);
+    }
+    return peers.map((p) =>
+      online.has(p.id)
+        ? { ...p, status: "online" as const, file: online.get(p.id) ?? null, activity: online.get(p.id) ? "Viewing" : "Online" }
+        : p,
+    );
+  }, [live, peers, collab.peers, collabMe.id]);
+  const peersHere = livePeers.filter((p) => p.file === active);
+  const activeSynced = !!activeSession?.synced;
+  const editorCollab = useMemo(
+    () => (activeSession && activeSynced ? { text: activeSession.text, awareness: activeSession.provider.awareness } : null),
+    [activeSession, activeSynced],
   );
 
   // ----- Actions -----------------------------------------------------------
@@ -230,9 +346,10 @@ export function WorkspaceIDE({
       const result = await createFileAction({ projectId: persistence.projectId, path });
       if (!result.ok) return result.error;
       setVersions((v) => ({ ...v, [path]: result.version }));
+      setFileIds((ids) => ({ ...ids, [path]: result.id }));
     }
     setFiles((f) => ({ ...f, [path]: "" }));
-    setSaved((s) => ({ ...s, [path]: "" }));
+    setSavedHash((h) => ({ ...h, [path]: hashText("") }));
     setExpanded((s) => new Set([...s, ...allFolders([path])]));
     openFile(path);
     return null;
@@ -246,11 +363,22 @@ export function WorkspaceIDE({
    * failed or conflicting save never clears the unsaved indicator.
    */
   async function saveFile(path: string, { overwrite = false }: { overwrite?: boolean } = {}) {
-    const content = files[path];
+    // With live editing, save exactly what's in the shared document.
+    const session = liveSessionFor(path);
+    if (isLivePath(path) && (!session?.synced || collab.status !== "connected")) {
+      toast({
+        tone: "warning",
+        title: `Can't save ${fileName(path)} yet`,
+        description: "The live session isn't connected. Your edits are kept — save again once it reconnects.",
+      });
+      return;
+    }
+    const content = session ? session.text.toString() : files[path];
     if (content === undefined) return;
+    const markerVersion = session?.saved.get("version");
 
     if (!persistence) {
-      setSaved((s) => ({ ...s, [path]: content }));
+      setSavedHash((h) => ({ ...h, [path]: hashText(content) }));
       toast({
         title: `Saved ${fileName(path)}`,
         description: "Demo workspace — saved in this tab only. Reloading resets it.",
@@ -269,11 +397,16 @@ export function WorkspaceIDE({
         projectId: persistence.projectId,
         path,
         content,
-        baseVersion: versions[path] ?? 1,
+        baseVersion: typeof markerVersion === "number" ? markerVersion : (versions[path] ?? 1),
         overwrite,
       });
       if (result.ok) {
-        setSaved((s) => ({ ...s, [path]: content }));
+        // Tell every collaborator what was saved (clears their unsaved dot too).
+        session?.doc.transact(() => {
+          session.saved.set("version", result.version);
+          session.saved.set("hash", hashText(content));
+        });
+        setSavedHash((h) => ({ ...h, [path]: hashText(content) }));
         setVersions((v) => ({ ...v, [path]: result.version }));
         setConflicts((c) => without(c, path));
         toast({ title: `Saved ${fileName(path)}` });
@@ -312,15 +445,29 @@ export function WorkspaceIDE({
       toast({ tone: "warning", title: "Couldn't load the saved version", description: result?.error ?? "Try again." });
       return;
     }
+    const session = liveSessionFor(path);
+    if (session?.synced) {
+      // Replace the shared text for everyone in this file.
+      session.doc.transact(() => {
+        session.text.delete(0, session.text.length);
+        session.text.insert(0, result.content);
+        session.saved.set("version", result.version);
+        session.saved.set("hash", hashText(result.content));
+      });
+    }
     setFiles((f) => ({ ...f, [path]: result.content }));
-    setSaved((s) => ({ ...s, [path]: result.content }));
+    setSavedHash((h) => ({ ...h, [path]: hashText(result.content) }));
     setVersions((v) => ({ ...v, [path]: result.version }));
     setConflicts((c) => without(c, path));
     toast({ tone: "info", title: `Loaded the saved ${fileName(path)}`, description: "Your unsaved edits were discarded." });
   }
 
-  // Warn before leaving a real project with unsaved changes.
-  const hasUnsaved = !isDemo && dirty.size > 0;
+  // Warn before leaving with changes that could be lost. With live editing,
+  // unsaved shared edits are kept by the collab server; only edits that
+  // haven't reached it yet are at risk.
+  const hasUnsaved = live
+    ? collab.hasUnsyncedChanges() || (collab.status !== "connected" && dirty.size > 0)
+    : !isDemo && dirty.size > 0;
   useEffect(() => {
     if (!hasUnsaved) return;
     const onBeforeUnload = (e: BeforeUnloadEvent) => e.preventDefault();
@@ -608,7 +755,7 @@ export function WorkspaceIDE({
       onCollapseAll={() => setExpanded(new Set())}
       onOpenFile={openFile}
       onCreateFile={createFile}
-      peers={peers}
+      peers={livePeers}
       readOnly={!canWrite}
     />
   );
@@ -616,7 +763,8 @@ export function WorkspaceIDE({
   const collaboration = (
     <CollaborationPanel
       me={me}
-      peers={peers}
+      livePresence={live}
+      peers={livePeers}
       call={call}
       onCallChange={(next) => setCall((c) => ({ ...c, ...next }))}
       onInvite={() => setInviteOpen(true)}
@@ -631,7 +779,7 @@ export function WorkspaceIDE({
         name={workspace.name}
         badge={isDemo ? "Sample" : !canWrite ? "View only" : undefined}
         branch={workspace.branch}
-        peers={peers}
+        peers={livePeers}
         explorerOpen={explorerVisible}
         bottomOpen={bottomOpen}
         collabOpen={collabVisible}
@@ -686,7 +834,15 @@ export function WorkspaceIDE({
                     </span>
                   ))}
                 </span>
-                {saving.has(active) ? (
+                {liveOffReason ? (
+                  <span className="flex shrink-0 items-center gap-1.5 text-warning" role="status" title={liveOffReason}>
+                    <TriangleAlert className="h-3 w-3" /> Live editing off — edits save normally
+                  </span>
+                ) : isLivePath(active) && !activeSynced ? (
+                  <span className="flex shrink-0 items-center gap-1.5" role="status">
+                    <LoaderCircle className="h-3 w-3 animate-spin" /> Connecting to live session…
+                  </span>
+                ) : saving.has(active) ? (
                   <span className="flex shrink-0 items-center gap-1.5" role="status">
                     <LoaderCircle className="h-3 w-3 animate-spin" /> Saving…
                   </span>
@@ -713,10 +869,12 @@ export function WorkspaceIDE({
                   <TriangleAlert className="h-4 w-4 shrink-0 text-warning" />
                   <p className="min-w-0 flex-1 text-fg-muted">
                     <span className="font-medium text-fg">A newer version of {fileName(active)} was saved elsewhere.</span>{" "}
-                    Your changes are kept here but haven&apos;t been saved.
+                    {live
+                      ? "The shared text hasn’t been saved."
+                      : "Your changes are kept here but haven’t been saved."}
                   </p>
                   <Button size="xs" variant="ghost" onClick={() => loadSavedVersion(active)}>
-                    Discard mine &amp; load saved
+                    {live ? "Replace shared text with saved" : "Discard mine & load saved"}
                   </Button>
                   <Button size="xs" disabled={saving.has(active)} onClick={() => saveFile(active, { overwrite: true })}>
                     {saving.has(active) && <LoaderCircle className="h-3 w-3 animate-spin" />}
@@ -726,7 +884,8 @@ export function WorkspaceIDE({
               )}
               <div className="min-h-0 flex-1">
                 <CodeEditor
-                  readOnly={!canWrite}
+                  readOnly={!canWrite || !liveReady}
+                  collab={editorCollab}
                   path={active}
                   value={files[active]}
                   onChange={(v) => setFiles((f) => ({ ...f, [active]: v }))}
@@ -828,6 +987,15 @@ export function WorkspaceIDE({
 
       <StatusBar
         persisted={!isDemo}
+        live={
+          collab.enabled
+            ? {
+                status: collab.failure ? "denied" : collab.status,
+                detail: collab.failure ?? undefined,
+                others: new Set(collab.peers.map((p) => p.user.id).filter((id) => id !== collabMe.id)).size,
+              }
+            : null
+        }
         branch={workspace.branch}
         errors={errors}
         warnings={warnings}
@@ -839,25 +1007,36 @@ export function WorkspaceIDE({
         cursor={active ? cursor : null}
         language={activeLanguage ? languageLabel[activeLanguage] : null}
         inCall={call.joined}
-        callCount={peers.filter((p) => p.inCall).length + 1}
+        callCount={livePeers.filter((p) => p.inCall).length + 1}
         dirtyCount={dirty.size}
       />
 
-      <InviteDialog
-        open={inviteOpen}
-        onClose={() => setInviteOpen(false)}
-        name={workspace.name}
-        me={me}
-        linkPath={`/workspace/${workspace.id}`}
-        onCopyLink={copyLink}
-        peers={peers}
-        invites={invites}
-        onAddInvite={(i) => {
-          setInvites((all) => [...all, i]);
-          toast({ tone: "info", title: `${i.email} added`, description: "Invite recorded locally — no email was sent." });
-        }}
-        onRemoveInvite={(email) => setInvites((all) => all.filter((i) => i.email !== email))}
-      />
+      {persistence ? (
+        <ProjectInviteDialog
+          open={inviteOpen}
+          onClose={() => setInviteOpen(false)}
+          projectId={persistence.projectId}
+          projectName={workspace.name}
+          me={me}
+          members={peers}
+        />
+      ) : (
+        <InviteDialog
+          open={inviteOpen}
+          onClose={() => setInviteOpen(false)}
+          name={workspace.name}
+          me={me}
+          linkPath={`/workspace/${workspace.id}`}
+          onCopyLink={copyLink}
+          peers={livePeers}
+          invites={invites}
+          onAddInvite={(i) => {
+            setInvites((all) => [...all, i]);
+            toast({ tone: "info", title: `${i.email} added`, description: "Invite recorded locally — no email was sent." });
+          }}
+          onRemoveInvite={(email) => setInvites((all) => all.filter((i) => i.email !== email))}
+        />
+      )}
     </div>
   );
 }

@@ -19,8 +19,8 @@ const shortcuts: { keys: string[]; label: string }[] = [
 ];
 
 const status: { area: string; now: string; next: string }[] = [
-  { area: "Editor", now: "Monaco editor; ⌘S saves your project files to PostgreSQL", next: "Live co-editing with Yjs" },
-  { area: "Collaboration", now: "Sample cursors and presence", next: "Real-time sync with Yjs" },
+  { area: "Editor", now: "Monaco editor; ⌘S saves your project files to PostgreSQL", next: "Version history" },
+  { area: "Collaboration", now: "Live co-editing, cursors and presence (Yjs)", next: "Invites and sharing" },
   { area: "Calls", now: "Call controls, no camera or microphone access", next: "Audio and video with LiveKit" },
   { area: "Terminal & Run", now: "Simulated in the browser", next: "Sandboxed execution" },
   { area: "Accounts & data", now: "Email sign-in; projects and files saved to your account", next: "Invites and sharing" },
@@ -37,8 +37,8 @@ export default function DocsPage() {
             Getting started with the preview
           </h1>
           <p className="mt-5 text-[16.5px] leading-7 text-fg-muted">
-            CodeLab is being built in phases. Accounts and saved projects work today; live
-            collaboration, calls and code execution are still simulated. The demo workspace runs on
+            CodeLab is being built in phases. Accounts, saved projects and live co-editing work
+            today; calls and code execution are still simulated. The demo workspace runs on
             sample data so you can explore without signing in.
           </p>
 
