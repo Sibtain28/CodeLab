@@ -15,14 +15,18 @@
     "db:studio": "prisma studio",
     "collab": "tsx collab/index.ts",
     "test:collab": "tsx --test tests/collab.test.ts",
-    "member:add": "tsx scripts/add-member.ts"
+    "member:add": "tsx scripts/add-member.ts",
+    "test:calls": "tsx --test tests/calls.test.mts"
   },
   "dependencies": {
     "@hocuspocus/provider": "4.7.1",
     "@hocuspocus/server": "4.7.1",
+    "@livekit/components-react": "2.9.24",
     "@prisma/adapter-pg": "7.10.1",
     "@prisma/client": "7.10.1",
     "better-auth": "1.7.12",
+    "livekit-client": "2.23.0",
+    "livekit-server-sdk": "2.19.2",
     "lucide-react": "1.52.0",
     "monaco-editor": "0.56.0",
     "next": "16.4.2",

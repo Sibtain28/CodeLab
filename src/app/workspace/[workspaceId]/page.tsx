@@ -7,6 +7,7 @@ import { WorkspaceIDE } from "@/components/workspace/workspace-ide";
 import { WorkspaceSkeleton } from "@/components/workspace/workspace-skeleton";
 import { demoMe, demoWorkspace, initialFiles, initialOpenTabs, peers } from "@/lib/mock/workspace";
 import { missingConfig } from "@/server/config";
+import { readLiveKitConfig } from "@/calls/token";
 import { checkLocalCollabServer } from "@/server/collab-health";
 import { AccessError, requireUser } from "@/server/dal";
 import { loadWorkspace, type WorkspaceData } from "@/server/projects";
@@ -77,6 +78,7 @@ async function ProjectWorkspace({ params }: { params: Promise<{ workspaceId: str
         // Read at request time, so one build works in every environment.
         collabUrl,
         collabProblem,
+        callsConfigured: readLiveKitConfig().ok,
       }}
     />
   );

@@ -1,6 +1,7 @@
 "use client";
 
 import { ChevronRight, Eye, FileCode2, Keyboard, LoaderCircle, TriangleAlert } from "lucide-react";
+import dynamic from "next/dynamic";
 import {
   useEffect,
   useEffectEvent,
@@ -40,10 +41,14 @@ import { InviteDialog, type PendingInvite } from "./invite-dialog";
 import { ResizeHandle } from "./resize-handle";
 import { StatusBar } from "./status-bar";
 import { Toolbar, type RunState, type Visibility } from "./toolbar";
+import type { LiveCallState } from "./call/live-call";
 import { ProjectInviteDialog } from "./project-invite-dialog";
 import { useCollaboration } from "./use-collaboration";
 
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
+
+/** The LiveKit client only loads for saved projects (never for the demo). */
+const LiveCall = dynamic(() => import("./call/live-call"), { ssr: false });
 
 function without<T>(record: Record<string, T>, key: string) {
   const next = { ...record };
@@ -115,6 +120,8 @@ export interface WorkspacePersistence {
   collabUrl: string | null;
   /** Set when the app server already knows live editing can't work (local dev). */
   collabProblem?: string | null;
+  /** True when LiveKit is configured on the server (calls can be joined). */
+  callsConfigured: boolean;
 }
 
 export function WorkspaceIDE({
@@ -174,6 +181,9 @@ export function WorkspaceIDE({
 
   // Collaboration (mock)
   const [call, setCall] = useState<CallState>({ joined: false, mic: true, camera: false, screen: false });
+  // Real calls (saved projects): the call UI renders into a slot in the panel.
+  const [callSlot, setCallSlot] = useState<HTMLDivElement | null>(null);
+  const [liveCall, setLiveCall] = useState<LiveCallState>({ joined: false, participants: 0 });
   const [inviteOpen, setInviteOpen] = useState(false);
   const [invites, setInvites] = useState<PendingInvite[]>([]);
   const [visibility, setVisibility] = useState<Visibility>("team");
@@ -767,6 +777,7 @@ export function WorkspaceIDE({
       peers={livePeers}
       call={call}
       onCallChange={(next) => setCall((c) => ({ ...c, ...next }))}
+      callSlot={persistence ? setCallSlot : undefined}
       onInvite={() => setInviteOpen(true)}
       onFollow={follow}
       onClose={isDesktop ? undefined : () => setMobileCollab(false)}
@@ -775,6 +786,16 @@ export function WorkspaceIDE({
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-sunken">
+      {persistence && (
+        <LiveCall
+          projectId={persistence.projectId}
+          me={{ name: me.name }}
+          configured={persistence.callsConfigured}
+          canPublish={me.role !== "Viewer"}
+          slot={callSlot}
+          onStateChange={setLiveCall}
+        />
+      )}
       <Toolbar
         name={workspace.name}
         badge={isDemo ? "Sample" : !canWrite ? "View only" : undefined}
@@ -1006,8 +1027,8 @@ export function WorkspaceIDE({
         runState={runState}
         cursor={active ? cursor : null}
         language={activeLanguage ? languageLabel[activeLanguage] : null}
-        inCall={call.joined}
-        callCount={livePeers.filter((p) => p.inCall).length + 1}
+        inCall={persistence ? liveCall.joined : call.joined}
+        callCount={persistence ? liveCall.participants : livePeers.filter((p) => p.inCall).length + 1}
         dirtyCount={dirty.size}
       />
 

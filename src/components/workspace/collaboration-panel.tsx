@@ -106,6 +106,7 @@ function CallButton({
 export function CollaborationPanel({
   me,
   livePresence = false,
+  callSlot,
   peers,
   call,
   onCallChange,
@@ -116,6 +117,11 @@ export function CollaborationPanel({
   me: WorkspaceMe;
   /** Participants and their files are real (live collaboration); the call is still simulated. */
   livePresence?: boolean;
+  /**
+   * Real calls (saved projects): the panel provides a slot and the LiveKit
+   * call renders into it. Without it, the simulated call below is shown.
+   */
+  callSlot?: (element: HTMLDivElement | null) => void;
   peers: WorkspacePeer[];
   call: CallState;
   onCallChange: (next: Partial<CallState>) => void;
@@ -159,7 +165,7 @@ export function CollaborationPanel({
           Collaboration
         </span>
         <div className="flex items-center gap-1.5">
-          <MockBadge>{livePresence ? "Call: mock" : "Mock"}</MockBadge>
+          {!callSlot && <MockBadge>{livePresence ? "Call: mock" : "Mock"}</MockBadge>}
           {onClose && (
             <IconButton label="Close panel" size="sm" onClick={onClose}>
               <X className="h-4 w-4" />
@@ -170,6 +176,11 @@ export function CollaborationPanel({
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {/* Call */}
+        {callSlot ? (
+          <section aria-label="Video call" className="px-3 pb-3">
+            <div ref={callSlot} />
+          </section>
+        ) : (
         <section aria-label="Video call" className="px-3 pb-3">
           {call.joined ? (
             <>
@@ -293,6 +304,7 @@ export function CollaborationPanel({
             </div>
           )}
         </section>
+        )}
 
         {/* Participants */}
         <section aria-label="Participants" className="border-t border-line p-3">
