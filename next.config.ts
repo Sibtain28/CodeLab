@@ -5,6 +5,7 @@ const nextConfig: NextConfig = {
   cacheComponents: true,
   partialPrefetching: true,
   experimental: {
+    agentUpgrade: "security",
     serverActions: {
       // Room for one file at the 500k-character save limit (UTF-8 can be up to 3 bytes/char).
       bodySizeLimit: "2mb",
