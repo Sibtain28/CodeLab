@@ -27,5 +27,9 @@ export function parseRoom(name: unknown): ParsedRoom | null {
 
 /** Y.Text holding the file's text. */
 export const TEXT_KEY = "content";
-/** Y.Map with the last explicit save: { version: number, hash: string }. */
+/**
+ * Y.Map with the last explicit save the live text is based on:
+ * { version: number, hash: string }, plus `latest: number` (set by the collab
+ * server) when a newer save conflicts with unsaved shared edits.
+ */
 export const SAVED_KEY = "saved";

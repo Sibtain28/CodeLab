@@ -23,6 +23,13 @@
  *   instead of re-seeding (which would duplicate text).
  * - First open of a file with no ydoc: seed the Y.Text from `content` and
  *   store the ydoc immediately.
+ * - Saves can also happen outside a live session (an editor whose live
+ *   editing is off saves through the same saveFile action). The database
+ *   stays the only source of truth: while documents are open, this server
+ *   polls their saved versions and reconciles each document with the newer
+ *   save (`reconcileWithSaved`). Nothing is pushed to this server, so there is
+ *   no new endpoint or credential, and a document never changes from anything
+ *   but the database row it is bound to.
  */
 import { Server, type onAuthenticatePayload, type onLoadDocumentPayload, type onStoreDocumentPayload } from "@hocuspocus/server";
 import * as Y from "yjs";
@@ -50,6 +57,65 @@ export interface CollabServerOptions {
   debounce?: number;
   maxDebounce?: number;
   log?: (message: string) => void;
+  /** How often open documents are compared with their saved version, ms. */
+  reconcileInterval?: number;
+  /**
+   * How long a draft must keep differing from a newer save before it is
+   * flagged as a conflict, ms. Covers the moment between a live editor's own
+   * save and its saved marker reaching this server.
+   */
+  conflictGrace?: number;
+}
+
+/** Transaction origin for changes this server makes to reconcile with a save. */
+const RECONCILE_ORIGIN = { codelab: "reconcile-with-save" };
+
+type SavedFile = { content: string; version: number };
+
+/**
+ * Brings a live document up to date with a newer explicit save, without ever
+ * discarding unsaved shared edits. The saved marker (Y.Map SAVED_KEY) holds
+ * `{ version, hash }` of the save the live text is based on, and `latest`
+ * when a newer save conflicts with a draft.
+ *
+ * - The document already knows this version (or a newer one): nothing to do.
+ * - The live text already equals the saved content: just move the marker.
+ * - No unsaved shared edits (text matches its marker): show the saved content.
+ * - A genuine draft: keep the text and its marker as they are, so the draft
+ *   still shows as unsaved and a save of it still fails the version check.
+ *   With `flagConflict`, record `latest` so every editor sees the conflict
+ *   and chooses explicitly (keep the draft, or load the saved version).
+ */
+export function reconcileWithSaved(document: Y.Doc, file: SavedFile, { flagConflict }: { flagConflict: boolean }) {
+  const saved = document.getMap(SAVED_KEY);
+  const text = document.getText(TEXT_KEY);
+  const known = saved.get("version");
+  if (typeof known === "number" && known >= file.version) return "current" as const;
+
+  const current = text.toString();
+  if (current === file.content) {
+    document.transact(() => {
+      saved.set("version", file.version);
+      saved.set("hash", hashText(file.content));
+      if (saved.has("latest")) saved.delete("latest");
+    }, RECONCILE_ORIGIN);
+    return "marked" as const;
+  }
+  if (saved.get("hash") === hashText(current)) {
+    document.transact(() => {
+      text.delete(0, text.length);
+      text.insert(0, file.content);
+      saved.set("version", file.version);
+      saved.set("hash", hashText(file.content));
+      if (saved.has("latest")) saved.delete("latest");
+    }, RECONCILE_ORIGIN);
+    return "replaced" as const;
+  }
+  if (!flagConflict) return "draft" as const;
+  if (saved.get("latest") !== file.version) {
+    document.transact(() => saved.set("latest", file.version), RECONCILE_ORIGIN);
+  }
+  return "conflict" as const;
 }
 
 /** Rejected connections get this generic reason; details stay in server logs. */
@@ -124,26 +190,10 @@ export function createCollabServer(options: CollabServerOptions) {
     const saved = document.getMap(SAVED_KEY);
     if (file.ydoc) {
       Y.applyUpdate(document, new Uint8Array(file.ydoc));
-      // The database has a newer save than this document knows about (saved
-      // while live editing was off, or the marker update never arrived).
-      const known = saved.get("version");
-      if (typeof known !== "number" || known < file.version) {
-        const text = document.getText(TEXT_KEY);
-        const current = text.toString();
-        // No unsaved shared edits → show the newer saved content. If there
-        // *are* unsaved shared edits, keep them (never discard work); they
-        // show as unsaved against the new marker.
-        const hasDraft = saved.get("hash") !== hashText(current);
-        document.transact(() => {
-          if (!hasDraft && current !== file.content) {
-            text.delete(0, text.length);
-            text.insert(0, file.content);
-          }
-          saved.set("version", file.version);
-          saved.set("hash", hashText(file.content));
-        });
-        await writeState(room.projectId, room.fileId, document);
-      }
+      // The database may have a newer save than this document knows about
+      // (saved while live editing was off, or the marker update never arrived).
+      const outcome = reconcileWithSaved(document, file, { flagConflict: true });
+      if (outcome !== "current") await writeState(room.projectId, room.fileId, document);
       return;
     }
 
@@ -163,7 +213,70 @@ export function createCollabServer(options: CollabServerOptions) {
     await writeState(room.projectId, room.fileId, document);
   }
 
-  return new Server<CollabContext>({
+  // ----- Reconciling open documents with saves made outside live editing -----
+  // Drafts that differ from a newer save, by document name: flagged only once
+  // they still differ after `conflictGrace` (a live editor's own save marker
+  // may still be on its way).
+  const pendingConflicts = new Map<string, { version: number; since: number }>();
+  const conflictGrace = options.conflictGrace ?? 3000;
+  let reconciling = false;
+
+  async function reconcileOpenDocuments() {
+    if (reconciling) return; // never overlap ticks
+    reconciling = true;
+    try {
+      const open = new Map<string, { name: string; projectId: string; document: Y.Doc }>();
+      for (const [name, document] of server.hocuspocus.documents) {
+        const room = parseRoom(name);
+        if (room?.kind === "file" && !document.isLoading) open.set(room.fileId, { name, projectId: room.projectId, document });
+      }
+      for (const name of pendingConflicts.keys()) {
+        if (!server.hocuspocus.documents.has(name)) pendingConflicts.delete(name);
+      }
+      if (!open.size) return;
+
+      // One cheap query for all open files; content is read only when needed.
+      const { rows } = await db.query<{ id: string; projectId: string; version: number }>(
+        'select id, "projectId", version from project_file where id = any($1::text[])',
+        [[...open.keys()]],
+      );
+      for (const row of rows) {
+        const entry = open.get(row.id);
+        // The room's project must own the file (always true for rooms that passed auth).
+        if (!entry || entry.projectId !== row.projectId) continue;
+        const known = entry.document.getMap(SAVED_KEY).get("version");
+        if (typeof known === "number" && known >= row.version) {
+          pendingConflicts.delete(entry.name);
+          continue;
+        }
+        const file = await readFile(entry.projectId, row.id);
+        // The document may have been unloaded while we waited.
+        if (!file || server.hocuspocus.documents.get(entry.name) !== entry.document) continue;
+
+        const pending = pendingConflicts.get(entry.name);
+        const graceOver = !!pending && pending.version === file.version && Date.now() - pending.since >= conflictGrace;
+        const outcome = reconcileWithSaved(entry.document, file, { flagConflict: graceOver });
+        if (outcome === "draft") {
+          if (!pending || pending.version !== file.version) pendingConflicts.set(entry.name, { version: file.version, since: Date.now() });
+        } else {
+          pendingConflicts.delete(entry.name);
+        }
+        if (outcome === "replaced" || outcome === "conflict") {
+          log(`${entry.name.slice(0, 16)}…: ${outcome === "replaced" ? "showing a newer save" : "a newer save conflicts with unsaved edits"} (v${file.version})`);
+        }
+      }
+    } catch (error) {
+      const code = (error as { code?: string }).code;
+      console.error(`[collab] couldn't check open documents against saves: ${error instanceof Error ? error.name : "error"}${code ? ` ${code}` : ""}`);
+    } finally {
+      reconciling = false;
+    }
+  }
+
+  const reconcileTimer = setInterval(() => void reconcileOpenDocuments(), options.reconcileInterval ?? 1500);
+  reconcileTimer.unref();
+
+  const server = new Server<CollabContext>({
     port: options.port,
     name: "codelab-collab",
     quiet: true,
@@ -222,5 +335,10 @@ export function createCollabServer(options: CollabServerOptions) {
         console.error("[collab] failed to store document state", error instanceof Error ? error.name : "");
       }
     },
+
+    async onDestroy() {
+      clearInterval(reconcileTimer);
+    },
   });
+  return server;
 }

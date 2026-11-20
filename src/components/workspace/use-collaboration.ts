@@ -89,7 +89,11 @@ export interface UseCollaborationOptions {
   /** A reason live editing can't work, known before connecting (skips the wait). */
   knownProblem?: string | null;
   onText: (path: string, text: string) => void;
-  onSaved: (path: string, saved: { version: number; hash: string }) => void;
+  /**
+   * The shared saved marker changed. `latest` is set (by the collab server)
+   * when a newer save conflicts with unsaved shared edits.
+   */
+  onSaved: (path: string, saved: { version: number; hash: string; latest?: number }) => void;
 }
 
 export function useCollaboration({
@@ -287,7 +291,10 @@ export function useCollaboration({
       const reportSaved = () => {
         const version = saved.get("version");
         const hash = saved.get("hash");
-        if (typeof version === "number" && typeof hash === "string") callbacks.current.onSaved(path, { version, hash });
+        const latest = saved.get("latest");
+        if (typeof version === "number" && typeof hash === "string") {
+          callbacks.current.onSaved(path, { version, hash, ...(typeof latest === "number" ? { latest } : {}) });
+        }
       };
       saved.observe(() => {
         if (session.synced) reportSaved();

@@ -6,11 +6,9 @@ import { FILE_CONTENT_MAX, MAX_FILES_PER_PROJECT, isValidFilePath } from "@/lib/
 import { SetupRequiredError } from "../config";
 import { getDb } from "../db";
 import { AccessError, requireProjectAccess } from "../dal";
+import { saveFileVersioned, type VersionedSaveResult } from "../file-save";
 
-export type SaveFileResult =
-  | { ok: true; version: number }
-  | { ok: false; reason: "conflict"; currentVersion: number; error: string }
-  | { ok: false; reason: "error"; error: string };
+export type SaveFileResult = VersionedSaveResult;
 
 export type CreateFileResult =
   | { ok: true; id: string; version: number }
@@ -51,30 +49,9 @@ export async function saveFile(input: unknown): Promise<SaveFileResult> {
 
   try {
     const { user, projectId } = await requireProjectAccess(parsed.data.projectId, { write: true });
-    const db = getDb();
-
-    return await db.$transaction(async (tx) => {
-      const where = overwrite ? { projectId, path } : { projectId, path, version: baseVersion };
-      const updated = await tx.projectFile.updateMany({
-        where,
-        data: { content, version: { increment: 1 }, updatedById: user.id },
-      });
-      const current = await tx.projectFile.findUnique({
-        where: { projectId_path: { projectId, path } },
-        select: { version: true },
-      });
-      if (!current) return { ok: false as const, reason: "error" as const, error: "This file no longer exists." };
-      if (updated.count === 0) {
-        return {
-          ok: false as const,
-          reason: "conflict" as const,
-          currentVersion: current.version,
-          error: "A newer version of this file was saved elsewhere.",
-        };
-      }
-      await tx.project.update({ where: { id: projectId }, data: { updatedAt: new Date() } });
-      return { ok: true as const, version: current.version };
-    });
+    // Open live documents pick the new version up from the database (see
+    // reconcileWithSaved in collab/server.ts); nothing else needs notifying.
+    return await saveFileVersioned(getDb(), { projectId, path, content, baseVersion, overwrite, userId: user.id });
   } catch (error) {
     const message = accessMessage(error);
     if (!message) console.error("saveFile failed", error);

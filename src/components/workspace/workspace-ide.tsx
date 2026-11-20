@@ -226,7 +226,18 @@ export function WorkspaceIDE({
     onSaved: (path, marker) => {
       setSavedHash((h) => (h[path] === marker.hash ? h : { ...h, [path]: marker.hash }));
       setVersions((v) => (v[path] === marker.version ? v : { ...v, [path]: marker.version }));
-      setConflicts((c) => (c[path] ? without(c, path) : c));
+      // A newer save conflicts with the shared draft: show the conflict choice
+      // (to people who can save). Resolving it moves `version` past `latest`.
+      const latest = canWrite && marker.latest !== undefined && marker.latest > marker.version ? marker.latest : null;
+      setConflicts((c) =>
+        latest !== null
+          ? c[path]?.currentVersion === latest
+            ? c
+            : { ...c, [path]: { currentVersion: latest } }
+          : c[path]
+            ? without(c, path)
+            : c,
+      );
     },
   });
   // Live editing is on unless it was given up for this visit (server not

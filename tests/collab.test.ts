@@ -12,11 +12,14 @@ import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { after, before, describe, test } from "node:test";
 import { HocuspocusProvider, HocuspocusProviderWebsocket } from "@hocuspocus/provider";
+import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import WebSocket from "ws";
 import * as Y from "yjs";
 import { createCollabServer } from "../collab/server";
 import { signCollabToken } from "../src/collab/token";
+import { PrismaClient } from "../src/generated/prisma/client";
+import { saveFileVersioned } from "../src/server/file-save";
 import { hashText } from "../src/lib/collab/hash";
 import { SAVED_KEY, TEXT_KEY, fileRoom, projectRoom } from "../src/lib/collab/rooms";
 
@@ -38,6 +41,8 @@ async function waitFor(check: () => boolean, ms = 4000, label = "condition") {
 }
 
 const db = new Pool({ connectionString: DATABASE_URL, max: 3 });
+/** For the app's real save path (src/server/file-save.ts, used by the saveFile action). */
+const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: DATABASE_URL! }) });
 
 // Fixture ids
 const alice = uid(); // owner of project A
@@ -50,6 +55,9 @@ const fileA1 = cuid();
 const fileA2 = cuid();
 const fileB1 = cuid();
 const fileA3 = cuid();
+const fileA4 = cuid();
+const fileA5 = cuid();
+const fileA6 = cuid();
 
 const token = (userId: string, projectId: string, exp = Date.now() + 60_000) =>
   signCollabToken({ uid: userId, pid: projectId, exp }, SECRET);
@@ -74,6 +82,8 @@ async function startServer(fixedPort = 0) {
     allowedOrigins: [ORIGIN],
     debounce: 100,
     maxDebounce: 300,
+    reconcileInterval: 100,
+    conflictGrace: 400,
     log: () => {},
   });
   server.httpServer.on("connection", (socket) => sockets.add(socket));
@@ -163,6 +173,9 @@ before(async () => {
     [fileA1, projectA, "a.ts", "const a = 1;\n"],
     [fileA2, projectA, "b.ts", "const b = 2;\n"],
     [fileA3, projectA, "c.ts", "const c = 3;\n"],
+    [fileA4, projectA, "d.ts", "const d = 4;\n"],
+    [fileA5, projectA, "e.ts", "const e = 1;\n"],
+    [fileA6, projectA, "f.ts", "const f = 1;\n"],
     [fileB1, projectB, "secret.ts", "TOP SECRET\n"],
   ]) {
     await db.query('insert into project_file (id, "projectId", path, content, "updatedAt") values ($1, $2, $3, $4, now())', [id, p, path, content]);
@@ -175,6 +188,7 @@ after(async () => {
   await server?.destroy();
   await db.query('delete from "user" where id = any($1)', [[alice, bob, vera, mallory]]); // cascades
   await db.end();
+  await prisma.$disconnect();
 });
 
 describe("authentication and authorization", () => {
@@ -285,6 +299,105 @@ describe("collaborative editing", () => {
   });
 });
 
+describe("saves made with live editing off", () => {
+  /** The app's save path, as the saveFile server action runs it after its access checks. */
+  const save = (path: string, content: string, baseVersion: number, overwrite = false) =>
+    saveFileVersioned(prisma, { projectId: projectA, path, content, baseVersion, overwrite, userId: bob });
+
+  test("reach editors who already have the file open, without a reload or reconnect", async () => {
+    const a = connect(fileRoom(projectA, fileA4), token(alice, projectA));
+    const b = connect(fileRoom(projectA, fileA4), token(bob, projectA));
+    assert.equal(await a.result(), "synced");
+    assert.equal(await b.result(), "synced");
+    assert.equal(a.text(), "const d = 4;\n");
+    let reconnects = 0;
+    a.provider.on("synced", () => reconnects++);
+
+    // Another editor, with live editing off, saves a newer version.
+    const result = await save("d.ts", "const d = 5;\n", 1);
+    assert.deepEqual(result, { ok: true, version: 2 });
+
+    await waitFor(() => a.text() === "const d = 5;\n" && b.text() === "const d = 5;\n", 4000, "live editors get the saved text");
+    const marker = a.doc.getMap(SAVED_KEY);
+    assert.equal(marker.get("version"), 2, "saved marker follows the database");
+    assert.equal(marker.get("hash"), hashText("const d = 5;\n"), "nothing shows as unsaved");
+    assert.ok(!((marker.get("latest") as number) > 2), "no conflict is flagged");
+    assert.equal(reconnects, 0, "no reconnect was needed");
+
+    // The live editor's next save is based on the new version: no confusing conflict.
+    a.doc.getText(TEXT_KEY).insert(0, "// live edit\n");
+    const next = await save("d.ts", a.text(), marker.get("version") as number);
+    assert.deepEqual(next, { ok: true, version: 3 });
+  });
+
+  test("never discard a live editor's unsaved draft; flag the conflict instead", async () => {
+    const a = connect(fileRoom(projectA, fileA5), token(alice, projectA));
+    assert.equal(await a.result(), "synced");
+    a.doc.getText(TEXT_KEY).insert(0, "// my unsaved draft\n");
+    const draft = a.text();
+    await waitFor(() => !a.provider.hasUnsyncedChanges, 4000, "draft reaches the server");
+
+    const result = await save("e.ts", "const e = 2;\n", 1);
+    assert.deepEqual(result, { ok: true, version: 2 });
+
+    const marker = a.doc.getMap(SAVED_KEY);
+    await waitFor(() => marker.get("latest") === 2, 4000, "conflict flagged in the live document");
+    assert.equal(a.text(), draft, "the draft is kept as is");
+    assert.equal(marker.get("version"), 1, "the draft is still based on version 1");
+    assert.equal(marker.get("hash"), hashText("const e = 1;\n"), "the draft still shows as unsaved");
+
+    // Someone opening the file now sees the same draft and the same conflict.
+    const late = connect(fileRoom(projectA, fileA5), token(bob, projectA));
+    assert.equal(await late.result(), "synced");
+    assert.equal(late.text(), draft);
+    assert.equal(late.doc.getMap(SAVED_KEY).get("latest"), 2);
+
+    // The version check still protects the newer save from a blind save of the draft.
+    const blind = await save("e.ts", draft, marker.get("version") as number);
+    assert.equal(blind.ok, false);
+    assert.equal(!blind.ok && blind.reason, "conflict");
+    const { rows } = await db.query("select content, version from project_file where id = $1", [fileA5]);
+    assert.deepEqual(rows[0], { content: "const e = 2;\n", version: 2 }, "the newer save is intact");
+
+    // Resolving explicitly ("Overwrite with my version") clears the conflict for everyone.
+    const resolved = await save("e.ts", draft, marker.get("version") as number, true);
+    assert.deepEqual(resolved, { ok: true, version: 3 });
+    a.doc.transact(() => {
+      marker.set("version", 3);
+      marker.set("hash", hashText(draft));
+    });
+    await sleep(600);
+    assert.equal(a.text(), draft);
+    assert.ok(!((late.doc.getMap(SAVED_KEY).get("latest") as number) > 3), "conflict cleared");
+  });
+
+  test("a live editor's own save doesn't flag a false conflict while its marker is in flight", async () => {
+    const a = connect(fileRoom(projectA, fileA6), token(alice, projectA));
+    assert.equal(await a.result(), "synced");
+    const marker = a.doc.getMap(SAVED_KEY);
+    let flagged = false;
+    marker.observe(() => {
+      if (typeof marker.get("latest") === "number") flagged = true;
+    });
+
+    a.doc.getText(TEXT_KEY).insert(0, "// edit\n");
+    const content = a.text();
+    const result = await save("f.ts", content, 1);
+    assert.deepEqual(result, { ok: true, version: 2 });
+    // The user keeps typing before the client publishes its saved marker.
+    a.doc.getText(TEXT_KEY).insert(a.text().length, "// still typing\n");
+    await sleep(200); // longer than the poll interval, shorter than the grace period
+    a.doc.transact(() => {
+      marker.set("version", 2);
+      marker.set("hash", hashText(content));
+    });
+    await sleep(800);
+    assert.equal(flagged, false);
+    assert.equal(a.text(), content + "// still typing\n", "typing is never replaced");
+    assert.equal(marker.get("version"), 2);
+  });
+});
+
 describe("persistence and reconnects", () => {
   test("unsaved shared edits survive a server restart without duplicating text", async () => {
     const fixedPort = port;
@@ -320,10 +433,13 @@ describe("persistence and reconnects", () => {
     await startServer(fixedPort);
     const h = connect(fileRoom(projectA, fileA2), token(alice, projectA));
     assert.equal(await h.result(), "synced");
-    assert.equal(h.doc.getMap(SAVED_KEY).get("version"), 2);
-    assert.equal(h.doc.getMap(SAVED_KEY).get("hash"), hashText("saved!"));
-    // The live text is kept (it holds unsaved shared edits), never silently replaced.
+    // The live text holds unsaved shared edits, so it is kept, never silently
+    // replaced. It stays based on version 1 (a save of it must still fail the
+    // version check) and the newer save is flagged as a conflict.
     assert.ok(h.text().includes("const b = 2;"));
+    assert.equal(h.doc.getMap(SAVED_KEY).get("version"), 1);
+    assert.equal(h.doc.getMap(SAVED_KEY).get("latest"), 2);
+    assert.notEqual(h.doc.getMap(SAVED_KEY).get("hash"), hashText(h.text()), "still shows as unsaved");
   });
 
   test("with no unsaved shared edits, a newer save replaces the live text", async () => {
