@@ -13,7 +13,7 @@
  *   the collab server verifies them and re-checks membership.
  */
 import { HocuspocusProvider, HocuspocusProviderWebsocket, WebSocketStatus } from "@hocuspocus/provider";
-import { useEffect, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import * as Y from "yjs";
 import type { CollabUser } from "@/lib/collab/cursors";
 import { SAVED_KEY, TEXT_KEY, fileRoom, projectRoom } from "@/lib/collab/rooms";
@@ -44,10 +44,19 @@ const CONNECT_TIMEOUT_MS = 8000;
 // Generous: the first open of a file waits on the database (e.g. a cold Neon).
 const SYNC_TIMEOUT_MS = 15000;
 
+export interface ActiveCollabExecution {
+  executionId: string;
+  entrypoint: string;
+  language: string;
+  startedBy: string;
+  startedAt: number;
+}
+
 export interface PresencePeer {
   clientId: number;
   user: CollabUser;
   file: string | null;
+  execution?: ActiveCollabExecution | null;
 }
 
 const COLORS: PeerColor[] = ["accent", "violet", "sky", "amber", "rose"];
@@ -200,7 +209,18 @@ export function useCollaboration({
         const user = readUser(state);
         if (!user) return;
         const file = typeof state.file === "string" ? state.file.slice(0, 200) : null;
-        list.push({ clientId, user, file });
+        const rawExec = state.execution as Partial<ActiveCollabExecution> | undefined;
+        const execution: ActiveCollabExecution | null =
+          rawExec && typeof rawExec.executionId === "string"
+            ? {
+                executionId: rawExec.executionId.slice(0, 128),
+                entrypoint: String(rawExec.entrypoint || "").slice(0, 256),
+                language: String(rawExec.language || "").slice(0, 32),
+                startedBy: String(rawExec.startedBy || "").slice(0, 80),
+                startedAt: typeof rawExec.startedAt === "number" ? rawExec.startedAt : Date.now(),
+              }
+            : null;
+        list.push({ clientId, user, file, execution });
       });
       setPeers(list);
     };
@@ -308,11 +328,26 @@ export function useCollaboration({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url, projectId, openKey]);
 
+  const setExecutionState = useCallback((exec: ActiveCollabExecution | null) => {
+    const awareness = presenceRef.current?.awareness;
+    if (!awareness) return;
+    awareness.setLocalStateField("execution", exec);
+  }, []);
+
+  const remoteExecution = useMemo(() => {
+    for (const p of peers) {
+      if (p.execution) return p.execution;
+    }
+    return null;
+  }, [peers]);
+
   return {
     enabled: !!configuredUrl,
     status,
     failure: knownProblem ?? failure,
     peers,
+    remoteExecution,
+    setExecutionState,
     session: (path: string | null) => (path ? (sessions.current.get(path) ?? null) : null),
     hasUnsyncedChanges: () => [...sessions.current.values()].some((s) => s.provider.hasUnsyncedChanges),
   };

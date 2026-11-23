@@ -52,6 +52,7 @@ export function Toolbar({
   runState,
   onRun,
   onStop,
+  canStop = true,
 }: {
   name: string;
   /** Short label next to the name, e.g. "Sample" for the demo. */
@@ -71,6 +72,7 @@ export function Toolbar({
   runState: RunState;
   onRun: () => void;
   onStop: () => void;
+  canStop?: boolean;
 }) {
   const online = peers.filter((p) => p.status === "online");
 
@@ -191,7 +193,14 @@ export function Toolbar({
             Run
           </Button>
         ) : (
-          <Button variant="danger-outline" size="sm" onClick={onStop} title="Stop (⌘↵)">
+          <Button
+            variant="danger-outline"
+            size="sm"
+            onClick={canStop ? onStop : undefined}
+            disabled={!canStop}
+            title={canStop ? "Stop (⌘↵)" : "Only the session owner or a project owner can stop execution"}
+            className={!canStop ? "cursor-not-allowed opacity-50" : undefined}
+          >
             {runState === "starting" ? (
               <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
             ) : (

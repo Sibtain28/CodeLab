@@ -21,7 +21,7 @@ export interface Token {
   text: string;
 }
 
-export type LanguageId = "tsx" | "ts" | "js" | "html" | "css" | "json" | "markdown" | "plain";
+export type LanguageId = "tsx" | "ts" | "js" | "cpp" | "go" | "html" | "css" | "json" | "markdown" | "plain";
 
 export function languageFromPath(path: string): LanguageId {
   const ext = path.split(".").pop()?.toLowerCase();
@@ -36,6 +36,14 @@ export function languageFromPath(path: string): LanguageId {
     case "mjs":
     case "cjs":
       return "js";
+    case "cpp":
+    case "cc":
+    case "cxx":
+    case "h":
+    case "hpp":
+      return "cpp";
+    case "go":
+      return "go";
     case "html":
     case "htm":
       return "html";
@@ -54,6 +62,8 @@ export const languageLabel: Record<LanguageId, string> = {
   tsx: "TypeScript JSX",
   ts: "TypeScript",
   js: "JavaScript",
+  cpp: "C++",
+  go: "Go",
   html: "HTML",
   css: "CSS",
   json: "JSON",
@@ -280,6 +290,11 @@ export function monacoLanguage(path: string): string {
       const ext = path.split(".").pop()?.toLowerCase();
       const basic: Record<string, string> = {
         py: "python",
+        cpp: "cpp",
+        cc: "cpp",
+        cxx: "cpp",
+        h: "cpp",
+        hpp: "cpp",
         go: "go",
         rs: "rust",
         toml: "ini",

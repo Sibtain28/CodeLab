@@ -1,11 +1,12 @@
-// Runs the Next.js dev server and the live collaboration server together:
+// Runs the Next.js dev server, live collaboration server, and code execution runner together:
 //   npm run dev:all
-// Output is prefixed with [web] / [collab]. Ctrl+C stops both.
+// Output is prefixed with [web] / [collab] / [runner]. Ctrl+C stops all.
 import { spawn } from "node:child_process";
 
 const procs = [
   { name: "web", cmd: "npx", args: ["next", "dev"] },
   { name: "collab", cmd: "npx", args: ["tsx", "collab/index.ts"] },
+  { name: "runner", cmd: "npx", args: ["tsx", "runner/index.ts"] },
 ].map(({ name, cmd, args }) => {
   const child = spawn(cmd, args, { stdio: ["inherit", "pipe", "pipe"], env: { ...process.env, FORCE_COLOR: "1" } });
   const prefix = (stream, out) =>

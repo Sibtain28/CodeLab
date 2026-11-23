@@ -14,7 +14,17 @@ import { MockBadge } from "@/components/ui/primitives";
 import { cn } from "@/lib/cn";
 import type { Problem } from "@/lib/mock/workspace";
 
+import { XTermView, type XTermHandle } from "./xterm-view";
+
 export type BottomTab = "terminal" | "output" | "problems";
+export type { XTermHandle };
+
+export interface ExecutionInfo {
+  isObserver?: boolean;
+  startedBy?: string;
+  entrypoint?: string;
+  canStop?: boolean;
+}
 
 export interface OutputLine {
   id: number;
@@ -47,8 +57,6 @@ export function BottomPanel({
   tab,
   onTabChange,
   onClose,
-  terminal,
-  onTerminalCommand,
   onClearTerminal,
   output,
   onClearOutput,
@@ -56,15 +64,15 @@ export function BottomPanel({
   onOpenProblem,
   getFix,
   running,
-  prompt,
+  executionInfo,
+  onTerminalData,
+  onTerminalSignal,
+  onTerminalHandleReady,
+  onRun,
 }: {
-  /** Terminal prompt, e.g. "~/my-project on main". */
-  prompt: string;
   tab: BottomTab;
   onTabChange: (t: BottomTab) => void;
   onClose: () => void;
-  terminal: TerminalLine[];
-  onTerminalCommand: (cmd: string) => void;
   onClearTerminal: () => void;
   output: OutputLine[];
   onClearOutput: () => void;
@@ -72,9 +80,27 @@ export function BottomPanel({
   onOpenProblem: (p: Problem) => void;
   getFix: (p: Problem) => DiagnosticFix | null;
   running: boolean;
+  executionInfo?: ExecutionInfo | null;
+  onTerminalData?: (data: string) => void;
+  onTerminalSignal?: (signal: "SIGINT") => void;
+  onTerminalHandleReady?: (handle: XTermHandle) => void;
+  onRun?: () => void;
 }) {
   const tabs: { id: BottomTab; label: string; badge?: ReactNode }[] = [
-    { id: "terminal", label: "Terminal" },
+    {
+      id: "terminal",
+      label: "Terminal",
+      badge: running ? (
+        <span className="flex items-center gap-1.5">
+          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
+          {executionInfo?.isObserver && (
+            <span className="rounded bg-line/80 px-1 py-0.2 font-mono text-[9.5px] uppercase tracking-wider text-fg-muted">
+              Observing
+            </span>
+          )}
+        </span>
+      ) : null,
+    },
     {
       id: "output",
       label: "Output",
@@ -131,8 +157,17 @@ export function BottomPanel({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1">
-        {tab === "terminal" && <Terminal prompt={prompt} lines={terminal} onCommand={onTerminalCommand} />}
+      <div className="relative min-h-0 flex-1">
+        <div className={cn("h-full w-full", tab !== "terminal" && "hidden")}>
+          <XTermView
+            onHandleReady={onTerminalHandleReady}
+            onData={onTerminalData}
+            onSignal={onTerminalSignal}
+            onRunRequest={onRun}
+            running={running}
+            readOnly={!!executionInfo?.isObserver}
+          />
+        </div>
         {tab === "output" && <Output lines={output} running={running} />}
         {tab === "problems" && (
           <Problems problems={problems} onOpen={onOpenProblem} getFix={getFix} />
@@ -149,95 +184,6 @@ function useAutoScroll(dep: unknown) {
     if (el) el.scrollTop = el.scrollHeight;
   }, [dep]);
   return ref;
-}
-
-function Terminal({
-  prompt,
-  lines,
-  onCommand,
-}: {
-  prompt: string;
-  lines: TerminalLine[];
-  onCommand: (cmd: string) => void;
-}) {
-  const [input, setInput] = useState("");
-  const [history, setHistory] = useState<string[]>([]);
-  const [cursor, setCursor] = useState<number | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const scrollRef = useAutoScroll(lines.length);
-
-  return (
-    <div
-      ref={scrollRef}
-      className="h-full overflow-y-auto px-4 py-3 font-mono text-[12.5px] leading-[20px]"
-      onClick={() => {
-        if (!window.getSelection()?.toString()) inputRef.current?.focus();
-      }}
-    >
-      {lines.map((l) => (
-        <div
-          key={l.id}
-          className={cn(
-            "whitespace-pre-wrap break-words",
-            l.kind === "system" && "text-fg-subtle",
-            l.kind === "output" && "text-fg-muted",
-            l.kind === "input" && "text-fg",
-          )}
-        >
-          {l.kind === "input" ? (
-            <>
-              <span className="text-accent">{prompt}</span> <span className="text-fg-faint">❯</span> {l.text}
-            </>
-          ) : (
-            l.text
-          )}
-        </div>
-      ))}
-      <form
-        className="flex items-center gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          const cmd = input.trim();
-          onCommand(cmd);
-          if (cmd) setHistory((h) => [...h, cmd]);
-          setInput("");
-          setCursor(null);
-        }}
-      >
-        <label htmlFor="terminal-input" className="shrink-0">
-          <span className="text-accent">{prompt}</span> <span className="text-fg-faint">❯</span>
-        </label>
-        <input
-          id="terminal-input"
-          ref={inputRef}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "ArrowUp" && history.length) {
-              e.preventDefault();
-              const next = cursor === null ? history.length - 1 : Math.max(0, cursor - 1);
-              setCursor(next);
-              setInput(history[next]);
-            } else if (e.key === "ArrowDown" && cursor !== null) {
-              e.preventDefault();
-              const next = cursor + 1;
-              if (next >= history.length) {
-                setCursor(null);
-                setInput("");
-              } else {
-                setCursor(next);
-                setInput(history[next]);
-              }
-            }
-          }}
-          autoComplete="off"
-          spellCheck={false}
-          aria-label="Terminal command"
-          className="min-w-0 flex-1 bg-transparent text-fg caret-accent outline-none"
-        />
-      </form>
-    </div>
-  );
 }
 
 function Output({ lines, running }: { lines: OutputLine[]; running: boolean }) {

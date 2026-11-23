@@ -3,6 +3,7 @@
 import { ChevronRight, Eye, FileCode2, Keyboard, LoaderCircle, TriangleAlert } from "lucide-react";
 import dynamic from "next/dynamic";
 import {
+  useCallback,
   useEffect,
   useEffectEvent,
   useMemo,
@@ -31,7 +32,7 @@ import {
   type BottomTab,
   type DiagnosticFix,
   type OutputLine,
-  type TerminalLine,
+  type XTermHandle,
 } from "./bottom-panel";
 import { CodeEditor, type EditorCommand, type EditorPeerCursor } from "./code-editor";
 import { CollaborationPanel, type CallState } from "./collaboration-panel";
@@ -96,12 +97,6 @@ function computeProblems(files: Record<string, string>): Problem[] {
   });
   return result.sort((a, b) => (a.severity === b.severity ? a.line - b.line : a.severity === "error" ? -1 : 1));
 }
-
-const initialTerminal: TerminalLine[] = [
-  { id: 1, kind: "system", text: "Simulated terminal — commands run in your browser only. Type `help` to see what's available." },
-  { id: 2, kind: "input", text: "git status" },
-  { id: 3, kind: "output", text: "On branch main\nYour branch is up to date with 'origin/main'." },
-];
 
 /**
  * Present for real projects: files are loaded from and saved to the database.
@@ -188,17 +183,38 @@ export function WorkspaceIDE({
   const [invites, setInvites] = useState<PendingInvite[]>([]);
   const [visibility, setVisibility] = useState<Visibility>("team");
 
-  // Run / terminal (simulated)
+  // Run / terminal
   const [runState, setRunState] = useState<RunState>("idle");
+  const [executionInfo, setExecutionInfo] = useState<{
+    isObserver?: boolean;
+    startedBy?: string;
+    entrypoint?: string;
+    canStop?: boolean;
+  } | null>(null);
   const [output, setOutput] = useState<OutputLine[]>([]);
-  const [terminal, setTerminal] = useState<TerminalLine[]>(initialTerminal);
   const lineId = useRef(100);
   const timers = useRef<number[]>([]);
+  const activeExecutionId = useRef<string | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const xtermHandleRef = useRef<XTermHandle | null>(null);
+  const activeSocketRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
     const pending = timers.current;
-    return () => pending.forEach((t) => window.clearTimeout(t));
-  }, []);
+    return () => {
+      pending.forEach((t) => window.clearTimeout(t));
+      activeSocketRef.current?.close();
+      if (activeExecutionId.current) {
+        abortControllerRef.current?.abort();
+        const id = activeExecutionId.current;
+        fetch("/api/run/stop", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ projectId: workspace.id, executionId: id }),
+        }).catch(() => {});
+      }
+    };
+  }, [workspace.id]);
 
   const paths = useMemo(() => Object.keys(files), [files]);
   const dirty = useMemo(
@@ -517,62 +533,374 @@ export function WorkspaceIDE({
     return lineId.current;
   }
 
-  function appendOutput(lines: Omit<OutputLine, "id">[]) {
+  const appendOutput = useCallback((lines: Omit<OutputLine, "id">[]) => {
     setOutput((o) => [...o, ...lines.map((l) => ({ ...l, id: nextId() }))]);
+  }, []);
+
+  function detectRunnable(): { language: "Python" | "JavaScript" | "TypeScript" | "C++" | "Go"; entrypoint: string } | null {
+    if (active) {
+      if (active.endsWith(".ts") && !active.endsWith(".d.ts")) return { language: "TypeScript", entrypoint: active };
+      if (active.endsWith(".go")) return { language: "Go", entrypoint: active };
+      if (active.endsWith(".cpp") || active.endsWith(".cc") || active.endsWith(".cxx")) return { language: "C++", entrypoint: active };
+      if (active.endsWith(".py")) return { language: "Python", entrypoint: active };
+      if (active.endsWith(".js") || active.endsWith(".mjs")) return { language: "JavaScript", entrypoint: active };
+    }
+
+    // Check paths for standard entrypoints
+    if (paths.includes("main.ts")) return { language: "TypeScript", entrypoint: "main.ts" };
+    if (paths.includes("index.ts")) return { language: "TypeScript", entrypoint: "index.ts" };
+    if (paths.includes("src/index.ts")) return { language: "TypeScript", entrypoint: "src/index.ts" };
+    if (paths.includes("src/main.ts")) return { language: "TypeScript", entrypoint: "src/main.ts" };
+    if (paths.includes("app.ts")) return { language: "TypeScript", entrypoint: "app.ts" };
+    const anyTs = paths.find((p) => p.endsWith(".ts") && !p.endsWith(".d.ts"));
+    if (anyTs) return { language: "TypeScript", entrypoint: anyTs };
+
+    if (paths.includes("main.go")) return { language: "Go", entrypoint: "main.go" };
+    if (paths.includes("app.go")) return { language: "Go", entrypoint: "app.go" };
+    const anyGo = paths.find((p) => p.endsWith(".go") && !p.endsWith("_test.go"));
+    if (anyGo) return { language: "Go", entrypoint: anyGo };
+
+    if (paths.includes("main.cpp")) return { language: "C++", entrypoint: "main.cpp" };
+    if (paths.includes("app.cpp")) return { language: "C++", entrypoint: "app.cpp" };
+    if (paths.includes("src/main.cpp")) return { language: "C++", entrypoint: "src/main.cpp" };
+    const anyCpp = paths.find((p) => p.endsWith(".cpp") || p.endsWith(".cc") || p.endsWith(".cxx"));
+    if (anyCpp) return { language: "C++", entrypoint: anyCpp };
+
+    if (paths.includes("main.py")) return { language: "Python", entrypoint: "main.py" };
+    if (paths.includes("app.py")) return { language: "Python", entrypoint: "app.py" };
+    const anyPy = paths.find((p) => p.endsWith(".py"));
+    if (anyPy) return { language: "Python", entrypoint: anyPy };
+
+    if (paths.includes("src/index.js")) return { language: "JavaScript", entrypoint: "src/index.js" };
+    if (paths.includes("index.js")) return { language: "JavaScript", entrypoint: "index.js" };
+    if (paths.includes("main.js")) return { language: "JavaScript", entrypoint: "main.js" };
+    const anyJs = paths.find((p) => p.endsWith(".js") || p.endsWith(".mjs"));
+    if (anyJs) return { language: "JavaScript", entrypoint: anyJs };
+
+    return null;
   }
 
-  function run() {
+  async function run() {
     if (runState !== "idle") return;
     setBottomOpen(true);
-    setBottomTab("output");
+    setBottomTab("terminal");
+    setTimeout(() => {
+      xtermHandleRef.current?.fit();
+      xtermHandleRef.current?.focus();
+    }, 50);
+
+    const target = detectRunnable();
+    if (!target) {
+      xtermHandleRef.current?.writeln("\x1b[33mNo runnable Go (.go), TypeScript (.ts), C++ (.cpp), Python (.py), or JavaScript (.js) file found in the project.\x1b[0m");
+      xtermHandleRef.current?.writeln("\x1b[90mOpen or create a .go, .ts, .cpp, .py, or .js file (e.g. main.go, main.ts, main.cpp, main.py, index.js) to run.\x1b[0m\r\n");
+      xtermHandleRef.current?.write("\x1b[32mcodelab\x1b[0m \x1b[90m$\x1b[0m ");
+      appendOutput([
+        { text: "$ run", tone: "accent" },
+        { text: "  No runnable Go (.go), TypeScript (.ts), C++ (.cpp), Python (.py), or JavaScript (.js) file found in the project.", tone: "warning" },
+        { text: "  Open or create a .go, .ts, .cpp, .py, or .js file (e.g. main.go, main.ts, main.cpp, main.py, index.js) to run.", tone: "muted" },
+        { text: "" },
+      ]);
+      return;
+    }
+
     setRunState("starting");
-    const hasError = problems.some((p) => p.severity === "error");
-    const errorAt = problems.find((p) => p.severity === "error");
-    const steps: [number, Omit<OutputLine, "id">[], (() => void)?][] = !isDemo
-      ? [
-          [0, [{ text: "$ run", tone: "accent" }]],
-          [300, [{ text: "  Simulated run — code execution isn't available yet, nothing was executed.", tone: "muted" }]],
-          [900, [{ text: `  ✓ ${workspace.name}: ${paths.length} files checked`, tone: "success" }], () => setRunState("running")],
-        ]
-      : [
-      [0, [{ text: "$ npm run dev", tone: "accent" }]],
-      [180, [{ text: "> orbit-dashboard@0.4.2 dev", tone: "muted" }, { text: "> next dev", tone: "muted" }, { text: "" }]],
-      [520, [{ text: "  ▲ Next.js 16.4.2 — simulated run, no code is executed" }]],
-      [780, [{ text: "  - Local:   http://localhost:3000 (simulated — nothing is served)", tone: "muted" }]],
-      [1150, [{ text: "  ✓ Starting...", tone: "success" }]],
-      [1650, [{ text: "  ✓ Ready in 812ms", tone: "success" }], () => setRunState("running")],
-      [2200, [{ text: "  ○ Compiling / ...", tone: "muted" }]],
-      [
-        2900,
-        hasError && errorAt
-          ? [
-              { text: `  ⨯ ./${errorAt.file}:${errorAt.line}:${errorAt.col}`, tone: "error" },
-              { text: `  Type error: ${errorAt.message}`, tone: "error" },
-              { text: "  1 error found — see the Problems tab for an explanation.", tone: "warning" },
-            ]
-          : [
-              { text: "  ✓ Compiled / in 1.2s", tone: "success" },
-              { text: "  GET / 200 in 64ms", tone: "muted" },
-            ],
-      ],
-    ];
-    // Mutate in place so the unmount cleanup sees every pending timer.
-    timers.current.push(
-      ...steps.map(([delay, lines, after]) =>
-        window.setTimeout(() => {
-          appendOutput(lines);
-          after?.();
-        }, delay),
-      ),
-    );
+    xtermHandleRef.current?.writeln(`\r\n\x1b[32m$ run ${target.entrypoint} (${target.language})\x1b[0m`);
+    appendOutput([
+      { text: `$ run ${target.entrypoint} (${target.language})`, tone: "accent" },
+    ]);
+
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+
+    try {
+      const res = await fetch("/api/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId: workspace.id,
+          language: target.language,
+          files,
+          entrypoint: target.entrypoint,
+          interactive: true,
+        }),
+        signal: abortController.signal,
+      });
+
+      if (!res.ok) {
+        const errorData = (await res.json().catch(() => ({}))) as { error?: string };
+        const errMsg = errorData.error || `Execution failed (HTTP ${res.status})`;
+        xtermHandleRef.current?.writeln(`\x1b[31m⨯ ${errMsg}\x1b[0m\r\n`);
+        xtermHandleRef.current?.write("\x1b[32mcodelab\x1b[0m \x1b[90m$\x1b[0m ");
+        appendOutput([
+          { text: `  ⨯ ${errMsg}`, tone: "error" },
+          { text: "" },
+        ]);
+        setRunState("idle");
+        activeExecutionId.current = null;
+        abortControllerRef.current = null;
+        return;
+      }
+
+      const data = (await res.json()) as { ok: boolean; executionId: string; token: string };
+      activeExecutionId.current = data.executionId;
+      setRunState("running");
+      setExecutionInfo({
+        isObserver: false,
+        startedBy: me.name,
+        entrypoint: target.entrypoint,
+        canStop: true,
+      });
+
+      // Broadcast execution state to project collaborators
+      collab.setExecutionState({
+        executionId: data.executionId,
+        entrypoint: target.entrypoint,
+        language: target.language,
+        startedBy: me.name,
+        startedAt: Date.now(),
+      });
+
+      // Connect to interactive WebSocket terminal
+      const host = window.location.hostname || "localhost";
+      const wsProto = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const wsUrl = `${wsProto}//${host}:4000/terminal?token=${encodeURIComponent(data.token)}&executionId=${encodeURIComponent(data.executionId)}`;
+      const ws = new WebSocket(wsUrl);
+      activeSocketRef.current = ws;
+      ws.onopen = () => {
+        xtermHandleRef.current?.focus();
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === "stdout" && msg.data) {
+            xtermHandleRef.current?.write(msg.data.replace(/\r?\n/g, "\r\n"));
+            appendOutput(msg.data.split("\n").filter(Boolean).map((t: string) => ({ text: t })));
+          } else if (msg.type === "stderr" && msg.data) {
+            xtermHandleRef.current?.write(`\x1b[31m${msg.data.replace(/\r?\n/g, "\r\n")}\x1b[0m`);
+            appendOutput(msg.data.split("\n").filter(Boolean).map((t: string) => ({ text: t, tone: "error" })));
+          } else if (msg.type === "exit") {
+            if (msg.timedOut) {
+              xtermHandleRef.current?.writeln(`\r\n\x1b[31m⨯ Execution timed out (15s limit reached).\x1b[0m\r\n`);
+              appendOutput([{ text: "  ⨯ Execution timed out (15s limit reached).", tone: "error" }]);
+            } else if (msg.exitCode === 0) {
+              xtermHandleRef.current?.writeln(`\r\n\x1b[32m✓ Process finished with exit code 0 (${msg.durationMs}ms)\x1b[0m\r\n`);
+              appendOutput([{ text: `  ✓ Process finished with exit code 0 (${msg.durationMs}ms)`, tone: "success" }]);
+            } else {
+              xtermHandleRef.current?.writeln(`\r\n\x1b[31m⨯ Process exited with code ${msg.exitCode} (${msg.durationMs}ms)\x1b[0m\r\n`);
+              appendOutput([{ text: `  ⨯ Process exited with code ${msg.exitCode} (${msg.durationMs}ms)`, tone: "error" }]);
+            }
+            appendOutput([{ text: "" }]);
+            setRunState("idle");
+            setExecutionInfo(null);
+            collab.setExecutionState(null);
+            activeExecutionId.current = null;
+            activeSocketRef.current = null;
+            xtermHandleRef.current?.write("\x1b[32mcodelab\x1b[0m \x1b[90m$\x1b[0m ");
+          } else if (msg.type === "error" && msg.error) {
+            xtermHandleRef.current?.writeln(`\r\n\x1b[31m⨯ Error: ${msg.error}\x1b[0m\r\n`);
+            xtermHandleRef.current?.write("\x1b[32mcodelab\x1b[0m \x1b[90m$\x1b[0m ");
+            appendOutput([{ text: `  ⨯ ${msg.error}`, tone: "error" }]);
+          }
+        } catch {
+          // Ignore parse errors
+        }
+      };
+
+      ws.onerror = () => {
+        xtermHandleRef.current?.writeln("\r\n\x1b[31m⨯ Terminal connection error\x1b[0m\r\n");
+        xtermHandleRef.current?.write("\x1b[32mcodelab\x1b[0m \x1b[90m$\x1b[0m ");
+        setRunState("idle");
+        setExecutionInfo(null);
+        collab.setExecutionState(null);
+        activeExecutionId.current = null;
+        activeSocketRef.current = null;
+      };
+
+      ws.onclose = () => {
+        if (activeExecutionId.current) {
+          xtermHandleRef.current?.write("\r\n\x1b[32mcodelab\x1b[0m \x1b[90m$\x1b[0m ");
+        }
+        setRunState("idle");
+        setExecutionInfo(null);
+        collab.setExecutionState(null);
+        activeExecutionId.current = null;
+        activeSocketRef.current = null;
+      };
+    } catch (err) {
+      if ((err as Error).name !== "AbortError") {
+        const msg = (err as Error).message;
+        xtermHandleRef.current?.writeln(`\r\n\x1b[31m⨯ Execution failed: ${msg}\x1b[0m\r\n`);
+        xtermHandleRef.current?.write("\x1b[32mcodelab\x1b[0m \x1b[90m$\x1b[0m ");
+        appendOutput([
+          { text: `  ⨯ Execution failed: ${msg}`, tone: "error" },
+          { text: "" },
+        ]);
+      }
+      setRunState("idle");
+      setExecutionInfo(null);
+      collab.setExecutionState(null);
+      activeExecutionId.current = null;
+      abortControllerRef.current = null;
+    }
   }
 
   function stop() {
     timers.current.forEach((t) => window.clearTimeout(t));
     timers.current.length = 0;
-    appendOutput([{ text: "■ Process stopped", tone: "muted" }, { text: "" }]);
+    if (activeSocketRef.current) {
+      activeSocketRef.current.close();
+      activeSocketRef.current = null;
+    }
+    if (activeExecutionId.current) {
+      const id = activeExecutionId.current;
+      abortControllerRef.current?.abort();
+      activeExecutionId.current = null;
+      abortControllerRef.current = null;
+      collab.setExecutionState(null);
+      setExecutionInfo(null);
+
+      fetch("/api/run/stop", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId: workspace.id, executionId: id }),
+      }).catch(() => {});
+
+      xtermHandleRef.current?.writeln("\r\n\x1b[33m■ Process stopped by user\x1b[0m\r\n");
+      xtermHandleRef.current?.write("\x1b[32mcodelab\x1b[0m \x1b[90m$\x1b[0m ");
+      appendOutput([{ text: "■ Process stopped by user", tone: "muted" }, { text: "" }]);
+    }
     setRunState("idle");
+    setExecutionInfo(null);
   }
+
+  function handleTerminalData(data: string) {
+    if (activeSocketRef.current && activeSocketRef.current.readyState === WebSocket.OPEN) {
+      activeSocketRef.current.send(JSON.stringify({ type: "stdin", data }));
+    }
+  }
+
+  function handleTerminalSignal(signal: "SIGINT") {
+    if (executionInfo?.isObserver && !executionInfo?.canStop) {
+      return;
+    }
+    if (activeSocketRef.current && activeSocketRef.current.readyState === WebSocket.OPEN) {
+      activeSocketRef.current.send(JSON.stringify({ type: "signal", signal }));
+    }
+  }
+
+  // Collaborative execution observer effect: sync terminal when a peer executes code
+  useEffect(() => {
+    const remote = collab.remoteExecution;
+    if (!remote) {
+      if (executionInfo?.isObserver) {
+        queueMicrotask(() => {
+          if (activeSocketRef.current) {
+            activeSocketRef.current.close();
+            activeSocketRef.current = null;
+          }
+          activeExecutionId.current = null;
+          setRunState("idle");
+          setExecutionInfo(null);
+        });
+      }
+      return;
+    }
+
+    // Ignore if already running own execution or already attached to this execution
+    if (activeExecutionId.current === remote.executionId) return;
+    if (runState !== "idle" && !executionInfo?.isObserver) return;
+
+    const targetRemote = remote;
+    let cancelled = false;
+    async function joinAsObserver() {
+      try {
+        const res = await fetch("/api/run/token", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            projectId: workspace.id,
+            executionId: targetRemote.executionId,
+          }),
+        });
+        if (!res.ok || cancelled) return;
+        const data = (await res.json()) as { ok: boolean; token: string; canStop?: boolean };
+        if (!data.ok || !data.token || cancelled) return;
+
+        setRunState("running");
+        setBottomOpen(true);
+        setBottomTab("terminal");
+        activeExecutionId.current = targetRemote.executionId;
+        setExecutionInfo({
+          isObserver: true,
+          startedBy: targetRemote.startedBy,
+          entrypoint: targetRemote.entrypoint,
+          canStop: !!data.canStop,
+        });
+
+        xtermHandleRef.current?.writeln(
+          `\r\n\x1b[36mℹ Joined execution session: ${targetRemote.entrypoint} (${targetRemote.language}) started by ${targetRemote.startedBy}\x1b[0m\r\n`,
+        );
+
+        const host = window.location.hostname || "localhost";
+        const wsProto = window.location.protocol === "https:" ? "wss:" : "ws:";
+        const wsUrl = `${wsProto}//${host}:4000/terminal?token=${encodeURIComponent(data.token)}&executionId=${encodeURIComponent(targetRemote.executionId)}`;
+        const ws = new WebSocket(wsUrl);
+        activeSocketRef.current = ws;
+
+        ws.onmessage = (event) => {
+          try {
+            const msg = JSON.parse(event.data);
+            if (msg.type === "stdout" && msg.data) {
+              xtermHandleRef.current?.write(msg.data.replace(/\r?\n/g, "\r\n"));
+              appendOutput(msg.data.split("\n").filter(Boolean).map((t: string) => ({ text: t })));
+            } else if (msg.type === "stderr" && msg.data) {
+              xtermHandleRef.current?.write(`\x1b[31m${msg.data.replace(/\r?\n/g, "\r\n")}\x1b[0m`);
+              appendOutput(msg.data.split("\n").filter(Boolean).map((t: string) => ({ text: t, tone: "error" })));
+            } else if (msg.type === "exit") {
+              if (msg.timedOut) {
+                xtermHandleRef.current?.writeln(`\r\n\x1b[31m⨯ Execution timed out (15s limit reached).\x1b[0m\r\n`);
+                appendOutput([{ text: "  ⨯ Execution timed out (15s limit reached).", tone: "error" }]);
+              } else if (msg.exitCode === 0) {
+                xtermHandleRef.current?.writeln(`\r\n\x1b[32m✓ Process finished with exit code 0 (${msg.durationMs}ms)\x1b[0m\r\n`);
+                appendOutput([{ text: `  ✓ Process finished with exit code 0 (${msg.durationMs}ms)`, tone: "success" }]);
+              } else {
+                xtermHandleRef.current?.writeln(`\r\n\x1b[31m⨯ Process exited with code ${msg.exitCode} (${msg.durationMs}ms)\x1b[0m\r\n`);
+                appendOutput([{ text: `  ⨯ Process exited with code ${msg.exitCode} (${msg.durationMs}ms)`, tone: "error" }]);
+              }
+              appendOutput([{ text: "" }]);
+              setRunState("idle");
+              setExecutionInfo(null);
+              activeExecutionId.current = null;
+              activeSocketRef.current = null;
+              xtermHandleRef.current?.write("\x1b[32mcodelab\x1b[0m \x1b[90m$\x1b[0m ");
+            } else if (msg.type === "error" && msg.error) {
+              xtermHandleRef.current?.writeln(`\r\n\x1b[31m⨯ ${msg.error}\x1b[0m\r\n`);
+            }
+          } catch {
+            // Ignore parse errors
+          }
+        };
+
+        ws.onclose = () => {
+          if (activeExecutionId.current === targetRemote.executionId) {
+            setRunState("idle");
+            setExecutionInfo(null);
+            activeExecutionId.current = null;
+            activeSocketRef.current = null;
+            xtermHandleRef.current?.write("\r\n\x1b[32mcodelab\x1b[0m \x1b[90m$\x1b[0m ");
+          }
+        };
+      } catch {
+        // Best effort
+      }
+    }
+
+    void joinAsObserver();
+    return () => {
+      cancelled = true;
+    };
+  }, [collab.remoteExecution, workspace.id, runState, executionInfo?.isObserver, appendOutput]);
 
   async function copyLink(): Promise<boolean> {
     const url = `${window.location.origin}/workspace/${workspace.id}`;
@@ -587,100 +915,6 @@ export function WorkspaceIDE({
       toast({ tone: "warning", title: "Couldn't copy the link", description: url });
       return false;
     }
-  }
-
-  function runCommand(raw: string) {
-    const input: TerminalLine = { id: nextId(), kind: "input", text: raw };
-    const out = (text: string): TerminalLine => ({ id: nextId(), kind: "output", text });
-    const [cmd, ...args] = raw.split(/\s+/);
-    if (!raw) return setTerminal((t) => [...t, input]);
-    if (cmd === "clear") return setTerminal([]);
-
-    let response: TerminalLine[] = [];
-    const topLevel = [...new Set(paths.map((p) => p.split("/")[0]))].sort();
-    switch (cmd) {
-      case "help":
-        response = [
-          out(
-            [
-              "Available (simulated) commands:",
-              "  ls [dir]        list files",
-              "  cat <file>      print a file",
-              "  pwd · whoami · date · echo",
-              "  git status      show unsaved files",
-              "  npm run dev     start a simulated run (same as Run)",
-              "  clear           clear the terminal",
-            ].join("\n"),
-          ),
-        ];
-        break;
-      case "ls": {
-        const dir = args[0]?.replace(/\/$/, "");
-        if (!dir) {
-          response = [out(topLevel.join("  "))];
-        } else {
-          const children = [
-            ...new Set(
-              paths
-                .filter((p) => p.startsWith(`${dir}/`))
-                .map((p) => p.slice(dir.length + 1).split("/")[0]),
-            ),
-          ].sort();
-          response = [out(children.length ? children.join("  ") : `ls: ${dir}: No such file or directory`)];
-        }
-        break;
-      }
-      case "cat":
-        response = [
-          out(
-            !args[0]
-              ? "usage: cat <file>"
-              : files[args[0]] !== undefined
-                ? files[args[0]] || "(empty file)"
-                : `cat: ${args[0]}: No such file`,
-          ),
-        ];
-        break;
-      case "pwd":
-        response = [out(`/workspace/${workspace.name}`)];
-        break;
-      case "whoami":
-        response = [out(me.handle)];
-        break;
-      case "date":
-        response = [out(new Date().toString())];
-        break;
-      case "echo":
-        response = [out(args.join(" "))];
-        break;
-      case "git":
-        if (args[0] === "status") {
-          response = [
-            out(
-              dirty.size
-                ? `On branch ${workspace.branch}\nChanges not staged for commit:\n${[...dirty]
-                    .map((p) => `\tmodified:   ${p}`)
-                    .join("\n")}`
-                : `On branch ${workspace.branch}\nnothing to commit, working tree clean`,
-            ),
-          ];
-        } else {
-          response = [out(`git ${args.join(" ")}: not available in the simulated terminal`)];
-        }
-        break;
-      case "npm":
-        if (args[0] === "run" && args[1] === "dev") {
-          response = [out("Starting simulated run… see the Output tab.")];
-          setTerminal((t) => [...t, input, ...response]);
-          run();
-          return;
-        }
-        response = [out("npm: package scripts aren't executed yet. Try `npm run dev` for a simulated run.")];
-        break;
-      default:
-        response = [out(`command not found: ${cmd}`)];
-    }
-    setTerminal((t) => [...t, input, ...response]);
   }
 
   function getFix(problem: Problem): DiagnosticFix | null {
@@ -834,6 +1068,7 @@ export function WorkspaceIDE({
         runState={runState}
         onRun={run}
         onStop={stop}
+        canStop={executionInfo ? !!executionInfo.canStop : true}
       />
 
       <div className="relative flex min-h-0 flex-1">
@@ -945,19 +1180,25 @@ export function WorkspaceIDE({
               />
               <div className="shrink-0" style={{ height: bottomHeight }}>
                 <BottomPanel
-                  prompt={`~/${workspace.name} on ${workspace.branch}`}
                   tab={bottomTab}
                   onTabChange={setBottomTab}
                   onClose={() => setBottomOpen(false)}
-                  terminal={terminal}
-                  onTerminalCommand={runCommand}
-                  onClearTerminal={() => setTerminal([])}
+                  onClearTerminal={() => {
+                    xtermHandleRef.current?.clear();
+                  }}
+                  onTerminalData={handleTerminalData}
+                  onTerminalSignal={handleTerminalSignal}
+                  onTerminalHandleReady={(handle) => {
+                    xtermHandleRef.current = handle;
+                  }}
                   output={output}
                   onClearOutput={() => setOutput([])}
                   problems={problems}
                   onOpenProblem={(p) => openFile(p.file, p.line)}
                   getFix={getFix}
                   running={runState !== "idle"}
+                  executionInfo={executionInfo}
+                  onRun={run}
                 />
               </div>
             </>
