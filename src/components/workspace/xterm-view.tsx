@@ -104,7 +104,7 @@ export function XTermView({
 
     // Initial welcome banner so terminal is never an empty blank box
     term.writeln("\x1b[1mCodeLab Terminal\x1b[0m — isolated Docker execution");
-    term.writeln("\x1b[90mClick \x1b[32m▶ Run\x1b[90m (or press \x1b[1m⌘Enter\x1b[90m) to execute your Go, TypeScript, C++, Python, or JavaScript code.\x1b[0m\r\n");
+    term.writeln("\x1b[90mClick \x1b[32m▶ Run\x1b[90m (or press \x1b[1m⌘Enter\x1b[90m) to execute your Rust, Go, TypeScript, C++, Python, or JavaScript code.\x1b[0m\r\n");
     term.write(PROMPT_STR);
 
     // Handle user keystrokes in xterm
@@ -163,7 +163,7 @@ export function XTermView({
 
         if (cmd === "help") {
           term.writeln("\x1b[1mAvailable commands:\x1b[0m");
-          term.writeln("  \x1b[32mrun\x1b[0m     Execute the current Go, TypeScript, C++, Python, or JavaScript file");
+          term.writeln("  \x1b[32mrun\x1b[0m     Execute the current Rust, Go, TypeScript, C++, Python, or JavaScript file");
           term.writeln("  \x1b[32mclear\x1b[0m   Clear the terminal screen");
           term.writeln("  \x1b[32mhelp\x1b[0m    Show this help message");
           term.writeln("\x1b[90mTip: You can also click ▶ Run or press ⌘Enter in the editor.\x1b[0m\r\n");

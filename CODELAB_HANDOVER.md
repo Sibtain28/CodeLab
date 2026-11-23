@@ -262,10 +262,34 @@ codelab/
   - Prioritizes active `.go` tabs, falling back to standard entrypoints (`main.go`, `app.go`, or any `.go` file in the workspace).
   - Configured Monaco editor and syntax tokenizer (`src/lib/highlight.ts`) with Go language mapping (`"go"`).
 
+### Phase 7.4 — Rust Runtime Support (Completed)
+- **Isolated Compiler & Runtime Strategy:**
+  - Standardized on `rust:1.85-alpine` (official, stable pinned Alpine image providing `rustc 1.85.1`).
+  - 100% offline compilation and execution (`--network none`); no external package or crate downloads during user execution.
+- **Two-Stage Safe Compilation & Execution:**
+  - Fast single/multi-file compilation via shell orchestration:
+    ```bash
+    rustc -O ./${entrypoint} -o ./app && exec ./app
+    ```
+  - Output binary `./app` is written to `/workspace:rw` (mounted with mode 0777).
+  - `exec ./app` replaces the shell process so standard POSIX signals (SIGINT / Ctrl+C) and exit codes propagate directly to the running binary without intermediate shell buffering.
+- **Multi-File Rust & Module Resolution:**
+  - Standard Rust module declarations (e.g. `mod calc;` or `mod math;`) resolve relative to the entrypoint directory (`/workspace` or `/workspace/src`), supporting multi-file architectures.
+- **Clear Compilation & Runtime Diagnostic Reporting:**
+  - Compiler errors output standard `rustc` diagnostic format with source spans, line numbers, and error codes (`error[E0308]: mismatched types`) to `stderr` with exit code 1.
+  - Runtime panics output `thread 'main' panicked at ...` to `stderr` with exit code 101.
+- **Interactive Stdin & Collaborative Support:**
+  - Interactive input (`std::io::stdin()`, `BufRead`, `read_line`) streams seamlessly over WebSockets.
+  - Interactive Ctrl+C (SIGINT) signal forwarding supported.
+  - Multi-client broadcast, observer read-only mode, and rolling history replay work seamlessly with Rust sessions.
+- **Automatic Language & Entrypoint Detection:**
+  - Prioritizes active `.rs` tabs, falling back to standard entrypoints (`src/main.rs`, `main.rs`, `app.rs`, or any `.rs` file in the workspace).
+  - Configured Monaco editor and syntax tokenizer (`src/lib/highlight.ts`) with Rust language mapping (`"rust"`).
+
 ---
 
 ## Automated Verification Status (All Passing)
-- **Execution Suite:** `npm run test:execution` — **52/52 tests passing** (Docker isolation, Python/JS/TS/C++/Go execution, Go standard library, multi-file Go, Go compilation errors, Go runtime panics, interactive Go `fmt.Scan` over WebSocket, multiple `fmt.Scan` inputs, Go Ctrl+C SIGINT handling, Go collaborative live execution, C++20 features, multi-file C++, C++ errors/signals/collab, type annotations, interfaces, enums, multi-file TS, TS errors, interactive TS readline, security hardening, non-root UID 1000, concurrency, timeouts, HTTP runner auth, interactive terminal WebSocket, multi-client broadcast, history replay, observer stdin blocking, stop authorization, and disconnect cleanup).
+- **Execution Suite:** `npm run test:execution` — **60/60 tests passing** (Docker isolation, Python/JS/TS/C++/Go/Rust execution, Rust standard library, multi-file Rust modules, Rust compilation errors, Rust runtime panics, interactive Rust stdin over WebSocket, multiple Rust inputs, Rust Ctrl+C SIGINT handling, Rust collaborative live execution, Go standard library, multi-file Go, Go compilation errors, Go runtime panics, interactive Go `fmt.Scan`, multiple `fmt.Scan` inputs, Go Ctrl+C SIGINT handling, Go collaborative live execution, C++20 features, multi-file C++, C++ errors/signals/collab, type annotations, interfaces, enums, multi-file TS, TS errors, interactive TS readline, security hardening, non-root UID 1000, concurrency, timeouts, HTTP runner auth, interactive terminal WebSocket, multi-client broadcast, history replay, observer stdin blocking, stop authorization, and disconnect cleanup).
 - **Members Suite:** `npm run test:members` — **14/14 tests passing** (6 suites).
 - **Collaboration Suite:** `npm run test:collab` — **18/18 tests passing** (4 suites).
 - **Calls Suite:** `npm run test:calls` — **16/16 tests passing** (4 suites).
@@ -283,7 +307,7 @@ codelab/
 3. **Collaborative Stdin Input (Future Phase):**
    - Only the execution owner can provide terminal stdin (strict observer mode). Collaborative typing or shared control can be added with explicit turn-taking or permissions in a subsequent phase.
 4. **External Third-Party Libraries (Future Phase):**
-   - Runtimes currently execute with Node.js/Python/C++/Go standard libraries only under `--network none`. Pre-installed modules or vendored dependency support can be introduced in a future phase.
+   - Runtimes currently execute with Node.js/Python/C++/Go/Rust standard libraries only under `--network none`. Pre-installed modules or vendored dependency support can be introduced in a future phase.
 5. **Auth Enhancements:**
    - No password reset or email verification loops currently implemented.
 
@@ -291,7 +315,7 @@ codelab/
 
 ## Recommended Next Tasks
 
-1. **Phase 7.4 — Rust Runtime Support:**
-   - Add native compilation and execution support for Rust (`rustc` / `cargo`) with isolated Docker sandboxing.
-2. **Phase 7.5 — Collaborative Terminal Input & Hand-Off:**
+1. **Phase 7.5 — Collaborative Terminal Input & Hand-Off:**
    - Allow execution session owners to hand off terminal input control to collaborators or enable shared terminal input with visual cursor indicators.
+2. **Phase 8.0 — Git Integration & Workspace Version Control:**
+   - Add branch management, commit/push/pull interfaces, and diff inspection in the IDE.

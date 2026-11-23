@@ -537,9 +537,10 @@ export function WorkspaceIDE({
     setOutput((o) => [...o, ...lines.map((l) => ({ ...l, id: nextId() }))]);
   }, []);
 
-  function detectRunnable(): { language: "Python" | "JavaScript" | "TypeScript" | "C++" | "Go"; entrypoint: string } | null {
+  function detectRunnable(): { language: "Python" | "JavaScript" | "TypeScript" | "C++" | "Go" | "Rust"; entrypoint: string } | null {
     if (active) {
       if (active.endsWith(".ts") && !active.endsWith(".d.ts")) return { language: "TypeScript", entrypoint: active };
+      if (active.endsWith(".rs")) return { language: "Rust", entrypoint: active };
       if (active.endsWith(".go")) return { language: "Go", entrypoint: active };
       if (active.endsWith(".cpp") || active.endsWith(".cc") || active.endsWith(".cxx")) return { language: "C++", entrypoint: active };
       if (active.endsWith(".py")) return { language: "Python", entrypoint: active };
@@ -554,6 +555,12 @@ export function WorkspaceIDE({
     if (paths.includes("app.ts")) return { language: "TypeScript", entrypoint: "app.ts" };
     const anyTs = paths.find((p) => p.endsWith(".ts") && !p.endsWith(".d.ts"));
     if (anyTs) return { language: "TypeScript", entrypoint: anyTs };
+
+    if (paths.includes("src/main.rs")) return { language: "Rust", entrypoint: "src/main.rs" };
+    if (paths.includes("main.rs")) return { language: "Rust", entrypoint: "main.rs" };
+    if (paths.includes("app.rs")) return { language: "Rust", entrypoint: "app.rs" };
+    const anyRs = paths.find((p) => p.endsWith(".rs"));
+    if (anyRs) return { language: "Rust", entrypoint: anyRs };
 
     if (paths.includes("main.go")) return { language: "Go", entrypoint: "main.go" };
     if (paths.includes("app.go")) return { language: "Go", entrypoint: "app.go" };
@@ -591,20 +598,21 @@ export function WorkspaceIDE({
 
     const target = detectRunnable();
     if (!target) {
-      xtermHandleRef.current?.writeln("\x1b[33mNo runnable Go (.go), TypeScript (.ts), C++ (.cpp), Python (.py), or JavaScript (.js) file found in the project.\x1b[0m");
-      xtermHandleRef.current?.writeln("\x1b[90mOpen or create a .go, .ts, .cpp, .py, or .js file (e.g. main.go, main.ts, main.cpp, main.py, index.js) to run.\x1b[0m\r\n");
+      xtermHandleRef.current?.write("\x1b[2K\r");
+      xtermHandleRef.current?.writeln("\x1b[33mNo runnable Rust (.rs), Go (.go), TypeScript (.ts), C++ (.cpp), Python (.py), or JavaScript (.js) file found in the project.\x1b[0m");
+      xtermHandleRef.current?.writeln("\x1b[90mOpen or create a .rs, .go, .ts, .cpp, .py, or .js file (e.g. main.rs, main.go, main.ts, main.cpp, main.py, index.js) to run.\x1b[0m\r\n");
       xtermHandleRef.current?.write("\x1b[32mcodelab\x1b[0m \x1b[90m$\x1b[0m ");
       appendOutput([
         { text: "$ run", tone: "accent" },
-        { text: "  No runnable Go (.go), TypeScript (.ts), C++ (.cpp), Python (.py), or JavaScript (.js) file found in the project.", tone: "warning" },
-        { text: "  Open or create a .go, .ts, .cpp, .py, or .js file (e.g. main.go, main.ts, main.cpp, main.py, index.js) to run.", tone: "muted" },
+        { text: "  No runnable Rust (.rs), Go (.go), TypeScript (.ts), C++ (.cpp), Python (.py), or JavaScript (.js) file found in the project.", tone: "warning" },
+        { text: "  Open or create a .rs, .go, .ts, .cpp, .py, or .js file (e.g. main.rs, main.go, main.ts, main.cpp, main.py, index.js) to run.", tone: "muted" },
         { text: "" },
       ]);
       return;
     }
 
     setRunState("starting");
-    xtermHandleRef.current?.writeln(`\r\n\x1b[32m$ run ${target.entrypoint} (${target.language})\x1b[0m`);
+    xtermHandleRef.current?.write(`\x1b[2K\r\x1b[32mcodelab\x1b[0m \x1b[90m$\x1b[0m \x1b[32mrun ${target.entrypoint} (${target.language})\x1b[0m\r\n`);
     appendOutput([
       { text: `$ run ${target.entrypoint} (${target.language})`, tone: "accent" },
     ]);
@@ -838,8 +846,8 @@ export function WorkspaceIDE({
           canStop: !!data.canStop,
         });
 
-        xtermHandleRef.current?.writeln(
-          `\r\n\x1b[36mℹ Joined execution session: ${targetRemote.entrypoint} (${targetRemote.language}) started by ${targetRemote.startedBy}\x1b[0m\r\n`,
+        xtermHandleRef.current?.write(
+          `\x1b[2K\r\x1b[36mℹ Joined execution session: ${targetRemote.entrypoint} (${targetRemote.language}) started by ${targetRemote.startedBy}\x1b[0m\r\n`,
         );
 
         const host = window.location.hostname || "localhost";

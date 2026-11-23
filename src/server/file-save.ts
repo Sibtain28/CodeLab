@@ -31,26 +31,29 @@ export interface VersionedSave {
  */
 export function saveFileVersioned(db: PrismaClient, input: VersionedSave): Promise<VersionedSaveResult> {
   const { projectId, path, content, baseVersion, overwrite, userId } = input;
-  return db.$transaction(async (tx) => {
-    const where = overwrite ? { projectId, path } : { projectId, path, version: baseVersion };
-    const updated = await tx.projectFile.updateMany({
-      where,
-      data: { content, version: { increment: 1 }, updatedById: userId },
-    });
-    const current = await tx.projectFile.findUnique({
-      where: { projectId_path: { projectId, path } },
-      select: { version: true },
-    });
-    if (!current) return { ok: false as const, reason: "error" as const, error: "This file no longer exists." };
-    if (updated.count === 0) {
-      return {
-        ok: false as const,
-        reason: "conflict" as const,
-        currentVersion: current.version,
-        error: "A newer version of this file was saved elsewhere.",
-      };
-    }
-    await tx.project.update({ where: { id: projectId }, data: { updatedAt: new Date() } });
-    return { ok: true as const, version: current.version };
-  });
+  return db.$transaction(
+    async (tx) => {
+      const where = overwrite ? { projectId, path } : { projectId, path, version: baseVersion };
+      const updated = await tx.projectFile.updateMany({
+        where,
+        data: { content, version: { increment: 1 }, updatedById: userId },
+      });
+      const current = await tx.projectFile.findUnique({
+        where: { projectId_path: { projectId, path } },
+        select: { version: true },
+      });
+      if (!current) return { ok: false as const, reason: "error" as const, error: "This file no longer exists." };
+      if (updated.count === 0) {
+        return {
+          ok: false as const,
+          reason: "conflict" as const,
+          currentVersion: current.version,
+          error: "A newer version of this file was saved elsewhere.",
+        };
+      }
+      await tx.project.update({ where: { id: projectId }, data: { updatedAt: new Date() } });
+      return { ok: true as const, version: current.version };
+    },
+    { maxWait: 15000, timeout: 15000 },
+  );
 }

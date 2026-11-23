@@ -7,7 +7,7 @@ import { signTerminalToken } from "@/server/terminal-token";
 const runSchema = z.object({
   projectId: z.string().max(64),
   executionId: z.string().max(128).optional(),
-  language: z.enum(["Python", "JavaScript", "TypeScript", "C++", "Go"]),
+  language: z.enum(["Python", "JavaScript", "TypeScript", "C++", "Go", "Rust"]),
   files: z.record(z.string(), z.string()),
   entrypoint: z.string().max(256),
   timeoutMs: z.number().int().positive().max(30000).optional(),

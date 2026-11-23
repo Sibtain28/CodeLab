@@ -1,4 +1,4 @@
-export type SupportedLanguage = "Python" | "JavaScript" | "TypeScript" | "C++" | "Go";
+export type SupportedLanguage = "Python" | "JavaScript" | "TypeScript" | "C++" | "Go" | "Rust";
 
 export interface ExecutionFileMap {
   [path: string]: string;

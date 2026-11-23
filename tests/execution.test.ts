@@ -595,6 +595,141 @@ test("CodeLab Execution Engine — Hardened Docker Isolation & Security Test Sui
     }
   });
 
+  // 6.13 Rust: single file execution with stdout
+  await t.test("Rust: single file execution with stdout", async () => {
+    const events: ExecutionEvent[] = [];
+    const executionId = `test-rust-single-${Date.now()}`;
+
+    await executeInDocker(
+      {
+        executionId,
+        language: "Rust",
+        files: {
+          "main.rs": [
+            "fn main() {",
+            "  let mut nums = vec![10, 20, 30, 40];",
+            "  nums.sort();",
+            "  let sum: i32 = nums.iter().sum();",
+            "  println!(\"Sum: {}\", sum);",
+            "  println!(\"Hello from isolated Rust container!\");",
+            "}",
+          ].join("\n"),
+        },
+        entrypoint: "main.rs",
+      },
+      (event) => events.push(event),
+    );
+
+    const stdout = getStdout(events);
+    assert.match(stdout, /Sum: 100/);
+    assert.match(stdout, /Hello from isolated Rust container!/);
+
+    const exitEv = events.find((e) => e.type === "exit");
+    assert.ok(exitEv);
+    if (exitEv.type === "exit") {
+      assert.equal(exitEv.exitCode, 0);
+      assert.equal(exitEv.timedOut, false);
+      assert.ok(exitEv.durationMs > 0);
+    }
+  });
+
+  // 6.14 Rust: multi-file/module workspace execution
+  await t.test("Rust: multi-file workspace execution with modules", async () => {
+    const events: ExecutionEvent[] = [];
+    const executionId = `test-rust-multi-${Date.now()}`;
+
+    await executeInDocker(
+      {
+        executionId,
+        language: "Rust",
+        files: {
+          "calc.rs": "pub fn multiply(a: i32, b: i32) -> i32 { a * b }\n",
+          "main.rs": [
+            "mod calc;",
+            "fn main() {",
+            "  println!(\"Result: {}\", calc::multiply(6, 7));",
+            "}",
+          ].join("\n"),
+        },
+        entrypoint: "main.rs",
+      },
+      (event) => events.push(event),
+    );
+
+    const stdout = getStdout(events);
+    assert.match(stdout, /Result: 42/);
+
+    const exitEv = events.find((e) => e.type === "exit");
+    assert.ok(exitEv);
+    if (exitEv.type === "exit") {
+      assert.equal(exitEv.exitCode, 0);
+    }
+  });
+
+  // 6.15 Rust: compilation error emits compiler diagnostic and non-zero exit code
+  await t.test("Rust: compilation error emits compiler diagnostic and non-zero exit code", async () => {
+    const events: ExecutionEvent[] = [];
+    const executionId = `test-rust-comp-err-${Date.now()}`;
+
+    await executeInDocker(
+      {
+        executionId,
+        language: "Rust",
+        files: {
+          "main.rs": [
+            "fn main() {",
+            "  let x: i32 = \"type mismatch\";",
+            "}",
+          ].join("\n"),
+        },
+        entrypoint: "main.rs",
+      },
+      (event) => events.push(event),
+    );
+
+    const stderr = getStderr(events);
+    assert.match(stderr, /mismatched types|expected `i32`, found `&str`/);
+
+    const exitEv = events.find((e) => e.type === "exit");
+    assert.ok(exitEv);
+    if (exitEv.type === "exit") {
+      assert.notEqual(exitEv.exitCode, 0);
+      assert.equal(exitEv.timedOut, false);
+    }
+  });
+
+  // 6.16 Rust: runtime panic emits stack trace and non-zero exit code
+  await t.test("Rust: runtime panic emits stack trace and non-zero exit code", async () => {
+    const events: ExecutionEvent[] = [];
+    const executionId = `test-rust-panic-${Date.now()}`;
+
+    await executeInDocker(
+      {
+        executionId,
+        language: "Rust",
+        files: {
+          "main.rs": [
+            "fn main() {",
+            "  panic!(\"Fatal Rust runtime panic\");",
+            "}",
+          ].join("\n"),
+        },
+        entrypoint: "main.rs",
+      },
+      (event) => events.push(event),
+    );
+
+    const stderr = getStderr(events);
+    assert.match(stderr, /thread 'main' panicked at/);
+    assert.match(stderr, /Fatal Rust runtime panic/);
+
+    const exitEv = events.find((e) => e.type === "exit");
+    assert.ok(exitEv);
+    if (exitEv.type === "exit") {
+      assert.notEqual(exitEv.exitCode, 0);
+    }
+  });
+
   // 7. Security: Network isolation
   await t.test("Security: container has zero network access (--network none)", async () => {
     const events: ExecutionEvent[] = [];
@@ -1670,6 +1805,189 @@ except OSError as e:
         client.close();
       });
 
+      // 17.3.8 Rust interactive stdin execution
+      await t.test("Rust: interactive stdin over WebSocket", async () => {
+        const execId = `test-ws-rust-stdin-${Date.now()}`;
+        const runRes = await fetch(`${baseUrl}/run`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Runner-Secret": RUNNER_SECRET,
+          },
+          body: JSON.stringify({
+            executionId: execId,
+            projectId: "proj-interactive-rust",
+            userId: "user-rust",
+            language: "Rust",
+            files: {
+              "main.rs": [
+                "use std::io::{self, BufRead, Write};",
+                "fn main() {",
+                "  print!(\"Enter your name: \");",
+                "  io::stdout().flush().unwrap();",
+                "  let mut input = String::new();",
+                "  io::stdin().lock().read_line(&mut input).unwrap();",
+                "  println!(\"Welcome to CodeLab Rust, {}!\", input.trim());",
+                "}",
+              ].join("\n"),
+            },
+            entrypoint: "main.rs",
+            interactive: true,
+          }),
+        });
+        assert.equal(runRes.status, 200);
+
+        const token = signTerminalToken(
+          {
+            uid: "user-rust",
+            pid: "proj-interactive-rust",
+            executionId: execId,
+            exp: Date.now() + 60_000,
+          },
+          RUNNER_SECRET,
+        );
+
+        const client = createWsClient(
+          `ws://127.0.0.1:${port}/terminal?token=${encodeURIComponent(token)}&executionId=${encodeURIComponent(execId)}`,
+        );
+        await client.openPromise;
+
+        await client.waitForMessage((m) => m.type === "stdout" && m.data.includes("Enter your name:"), 20000);
+        client.ws.send(JSON.stringify({ type: "stdin", data: "Ferris\n" }));
+
+        await client.waitForMessage((m) => m.type === "stdout" && m.data.includes("Welcome to CodeLab Rust, Ferris!"));
+
+        const exitMsg = (await client.waitForMessage((m) => m.type === "exit")) as {
+          type: "exit";
+          exitCode: number;
+        };
+        assert.equal(exitMsg.exitCode, 0);
+
+        client.close();
+      });
+
+      // 17.3.9 Rust: multiple sequential inputs over WebSocket
+      await t.test("Rust: multiple inputs over stdin", async () => {
+        const execId = `test-ws-rust-multi-${Date.now()}`;
+        const runRes = await fetch(`${baseUrl}/run`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Runner-Secret": RUNNER_SECRET,
+          },
+          body: JSON.stringify({
+            executionId: execId,
+            projectId: "proj-interactive-rust-2",
+            userId: "user-rust-2",
+            language: "Rust",
+            files: {
+              "main.rs": [
+                "use std::io::{self, BufRead};",
+                "fn main() {",
+                "  let stdin = io::stdin();",
+                "  let mut lines = stdin.lock().lines();",
+                "  let a: i32 = lines.next().unwrap().unwrap().trim().parse().unwrap();",
+                "  let b: i32 = lines.next().unwrap().unwrap().trim().parse().unwrap();",
+                "  println!(\"Product: {}\", a * b);",
+                "}",
+              ].join("\n"),
+            },
+            entrypoint: "main.rs",
+            interactive: true,
+          }),
+        });
+        assert.equal(runRes.status, 200);
+
+        const token = signTerminalToken(
+          {
+            uid: "user-rust-2",
+            pid: "proj-interactive-rust-2",
+            executionId: execId,
+            exp: Date.now() + 60_000,
+          },
+          RUNNER_SECRET,
+        );
+
+        const client = createWsClient(
+          `ws://127.0.0.1:${port}/terminal?token=${encodeURIComponent(token)}&executionId=${encodeURIComponent(execId)}`,
+        );
+        await client.openPromise;
+
+        client.ws.send(JSON.stringify({ type: "stdin", data: "7\n" }));
+        client.ws.send(JSON.stringify({ type: "stdin", data: "9\n" }));
+
+        await client.waitForMessage((m) => m.type === "stdout" && m.data.includes("Product: 63"));
+
+        const exitMsg = (await client.waitForMessage((m) => m.type === "exit")) as {
+          type: "exit";
+          exitCode: number;
+        };
+        assert.equal(exitMsg.exitCode, 0);
+
+        client.close();
+      });
+
+      // 17.3.10 Rust: Ctrl+C (SIGINT) signal handling over WebSocket
+      await t.test("Rust: Ctrl+C (SIGINT) signal handling over WebSocket", async () => {
+        const execId = `test-ws-rust-sigint-${Date.now()}`;
+        const runRes = await fetch(`${baseUrl}/run`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Runner-Secret": RUNNER_SECRET,
+          },
+          body: JSON.stringify({
+            executionId: execId,
+            projectId: "proj-rust-sigint",
+            userId: "user-rust-sig",
+            language: "Rust",
+            files: {
+              "main.rs": [
+                "extern \"C\" {",
+                "    fn signal(sig: i32, handler: extern \"C\" fn(i32)) -> usize;",
+                "}",
+                "extern \"C\" fn handle_sigint(_: i32) {",
+                "    println!(\"RUST_CAUGHT_SIGINT\");",
+                "    std::process::exit(0);",
+                "}",
+                "fn main() {",
+                "    unsafe { signal(2, handle_sigint); }",
+                "    println!(\"RUST_READY_WAITING\");",
+                "    std::thread::sleep(std::time::Duration::from_secs(30));",
+                "}",
+              ].join("\n"),
+            },
+            entrypoint: "main.rs",
+            interactive: true,
+          }),
+        });
+        assert.equal(runRes.status, 200);
+
+        const token = signTerminalToken(
+          {
+            uid: "user-rust-sig",
+            pid: "proj-rust-sigint",
+            executionId: execId,
+            exp: Date.now() + 60_000,
+          },
+          RUNNER_SECRET,
+        );
+
+        const client = createWsClient(
+          `ws://127.0.0.1:${port}/terminal?token=${encodeURIComponent(token)}&executionId=${encodeURIComponent(execId)}`,
+        );
+        await client.openPromise;
+
+        await client.waitForMessage((m) => m.type === "stdout" && m.data.includes("RUST_READY_WAITING"), 20000);
+        client.ws.send(JSON.stringify({ type: "signal", signal: "SIGINT" }));
+
+        await client.waitForMessage((m) => m.type === "stdout" && m.data.includes("RUST_CAUGHT_SIGINT"));
+        const exitMsg = (await client.waitForMessage((m) => m.type === "exit")) as { type: "exit"; exitCode: number };
+        assert.equal(exitMsg.exitCode, 0);
+
+        client.close();
+      });
+
       // 17.4 Ctrl+C (SIGINT) signal handling over WebSocket
       await t.test("Ctrl+C: SIGINT signal terminates container cleanly", async () => {
         const execId = `test-ws-sigint-${Date.now()}`;
@@ -2336,6 +2654,72 @@ except OSError as e:
           .join("");
         assert.match(observerStdout, /GO_COLLAB_OUTPUT_FOR_OBSERVERS/);
         assert.match(observerStdout, /GO_COLLAB_FINISHED/);
+      });
+
+      await t.test("Phase 7.4 — Rust collaborative live execution output to observer", async () => {
+        const execId = `test-collab-rust-${Date.now()}`;
+        const projId = "proj-collab-rust";
+        const ownerId = "user-alice-rust";
+        const observerId = "user-bob-rust";
+
+        await fetch(`${baseUrl}/run`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Runner-Secret": RUNNER_SECRET,
+          },
+          body: JSON.stringify({
+            executionId: execId,
+            projectId: projId,
+            userId: ownerId,
+            language: "Rust",
+            files: {
+              "main.rs": [
+                "use std::thread;",
+                "use std::time::Duration;",
+                "fn main() {",
+                "  println!(\"RUST_COLLAB_OUTPUT_FOR_OBSERVERS\");",
+                "  thread::sleep(Duration::from_millis(500));",
+                "  println!(\"RUST_COLLAB_FINISHED\");",
+                "}",
+              ].join("\n"),
+            },
+            entrypoint: "main.rs",
+            interactive: true,
+          }),
+        });
+
+        const observerToken = signTerminalToken(
+          { uid: observerId, pid: projId, executionId: execId, exp: Date.now() + 60_000 },
+          RUNNER_SECRET,
+        );
+        const observerWs = new WebSocket(`ws://127.0.0.1:${port}/terminal?token=${encodeURIComponent(observerToken)}&executionId=${encodeURIComponent(execId)}`);
+        await new Promise<void>((r) => observerWs.on("open", () => r()));
+
+        const observerMessages: Array<{ type: string; data?: string }> = [];
+        observerWs.on("message", (raw) => {
+          try {
+            observerMessages.push(JSON.parse(raw.toString("utf8")));
+          } catch {}
+        });
+
+        // Wait for exit
+        await new Promise<void>((resolve) => {
+          const check = () => {
+            if (observerMessages.some((m) => m.type === "exit")) resolve();
+            else setTimeout(check, 50);
+          };
+          check();
+        });
+
+        observerWs.close();
+
+        const observerStdout = observerMessages
+          .filter((m) => m.type === "stdout")
+          .map((m) => m.data || "")
+          .join("");
+        assert.match(observerStdout, /RUST_COLLAB_OUTPUT_FOR_OBSERVERS/);
+        assert.match(observerStdout, /RUST_COLLAB_FINISHED/);
       });
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));

@@ -14,6 +14,7 @@ const IMAGE_MAP: Record<SupportedLanguage, string> = {
   TypeScript: "node:22-alpine",
   "C++": "frolvlad/alpine-gxx:latest",
   Go: "golang:1.24-alpine",
+  Rust: "rust:1.85-alpine",
 };
 
 export const MAX_CONCURRENT_EXECUTIONS = Number(process.env.MAX_CONCURRENT_EXECUTIONS || 5);
@@ -452,6 +453,9 @@ export async function executeInDocker(
       );
       const compileFiles = [`./${entrypoint}`, ...helperGoFiles.map((p) => `./${p}`)];
       const shellCmd = `GOCACHE=/workspace/.gocache GOPATH=/workspace/.gopath GOTMPDIR=/tmp go build -o ./app ${compileFiles.map((f) => `"${f.replace(/"/g, '\\"')}"`).join(" ")} && exec ./app`;
+      commandArgs = ["sh", "-c", shellCmd];
+    } else if (language === "Rust") {
+      const shellCmd = `rustc -O ./${entrypoint} -o ./app && exec ./app`;
       commandArgs = ["sh", "-c", shellCmd];
     } else {
       commandArgs = ["node", "--", `./${entrypoint}`];
